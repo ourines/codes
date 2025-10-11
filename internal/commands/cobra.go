@@ -8,6 +8,16 @@ import (
 	"codes/internal/ui"
 )
 
+// InitCmd represents the init command
+var InitCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Check environment and configuration",
+	Long:  "Verify Claude CLI installation and validate configuration files",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunInit()
+	},
+}
+
 // InstallCmd represents the install command
 var InstallCmd = &cobra.Command{
 	Use:   "install",

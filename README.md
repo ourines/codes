@@ -56,7 +56,15 @@ make build
 
 ## Quick Start
 
-### 1. Add Your First Configuration
+### 1. Check Your Environment (Optional but Recommended)
+
+```bash
+codes init
+```
+
+This will verify that everything is set up correctly and guide you if something is missing.
+
+### 2. Add Your First Configuration
 
 ```bash
 codes add
@@ -69,7 +77,7 @@ You'll be prompted to enter:
 
 The tool will automatically test the API connection before saving.
 
-### 2. Run Claude with Your Configuration
+### 3. Run Claude with Your Configuration
 
 ```bash
 codes
@@ -77,7 +85,7 @@ codes
 
 This will launch Claude CLI with the selected configuration's environment variables.
 
-### 3. Switch Between Configurations
+### 4. Switch Between Configurations
 
 ```bash
 codes select
@@ -86,6 +94,29 @@ codes select
 An interactive menu will appear showing all your configurations. Select one to switch and launch Claude.
 
 ## Commands
+
+### `codes init`
+
+Check your environment and validate your configuration. This command performs comprehensive checks including:
+
+- Verifies Claude CLI installation
+- Checks configuration file existence and validity
+- Tests API connectivity for the default configuration
+- Displays detailed status of all configurations
+
+```bash
+codes init
+```
+
+**Example output:**
+```
+✓ Claude CLI is installed
+✓ Configuration file exists
+✓ Found 3 configuration(s)
+✓ Default configuration is working
+```
+
+This is a great command to run after installation or when troubleshooting issues.
 
 ### `codes` (no arguments)
 

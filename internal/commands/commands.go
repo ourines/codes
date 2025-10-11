@@ -360,6 +360,135 @@ func installClaude(version string) {
 	ui.ShowSuccess("Claude installed successfully!")
 }
 
+func RunInit() {
+	ui.ShowHeader("Codes CLI Environment Check")
+	fmt.Println()
+
+	allGood := true
+
+	// 1. Check if Claude CLI is installed
+	ui.ShowInfo("Checking Claude CLI installation...")
+	if _, err := exec.LookPath("claude"); err != nil {
+		ui.ShowError("✗ Claude CLI not found", nil)
+		ui.ShowWarning("  Run 'codes update' to install Claude CLI")
+		allGood = false
+	} else {
+		ui.ShowSuccess("✓ Claude CLI is installed")
+
+		// Check Claude version
+		cmd := exec.Command("claude", "--version")
+		output, err := cmd.Output()
+		if err == nil {
+			version := strings.TrimSpace(string(output))
+			ui.ShowInfo("  Version: %s", version)
+		}
+	}
+	fmt.Println()
+
+	// 2. Check if config file exists
+	ui.ShowInfo("Checking configuration file...")
+	if _, err := os.Stat(config.ConfigPath); err != nil {
+		ui.ShowError("✗ Configuration file not found", nil)
+		ui.ShowInfo("  Expected location: %s", config.ConfigPath)
+		ui.ShowWarning("  Run 'codes add' to create your first configuration")
+		allGood = false
+	} else {
+		ui.ShowSuccess("✓ Configuration file exists")
+		ui.ShowInfo("  Location: %s", config.ConfigPath)
+
+		// 3. Validate configuration
+		cfg, err := config.LoadConfig()
+		if err != nil {
+			ui.ShowError("✗ Failed to load configuration", err)
+			ui.ShowWarning("  Your config file may be corrupted")
+			allGood = false
+		} else {
+			if len(cfg.Configs) == 0 {
+				ui.ShowWarning("✗ No configurations found in config file")
+				ui.ShowWarning("  Run 'codes add' to add a configuration")
+				allGood = false
+			} else {
+				ui.ShowSuccess("✓ Found %d configuration(s)", len(cfg.Configs))
+
+				// Show configurations with status
+				fmt.Println()
+				ui.ShowInfo("Configurations:")
+				for i, c := range cfg.Configs {
+					isDefault := ""
+					if c.Name == cfg.Default {
+						isDefault = " (default)"
+					}
+
+					statusIcon := "?"
+					statusText := "unknown"
+					if c.Status == "active" {
+						statusIcon = "✓"
+						statusText = "active"
+					} else if c.Status == "inactive" {
+						statusIcon = "✗"
+						statusText = "inactive"
+					}
+
+					fmt.Printf("  %d. %s %s%s - %s [%s]\n",
+						i+1, statusIcon, c.Name, isDefault, c.AnthropicBaseURL, statusText)
+				}
+
+				// 4. Test default configuration
+				if cfg.Default != "" {
+					fmt.Println()
+					ui.ShowInfo("Testing default configuration '%s'...", cfg.Default)
+
+					var defaultConfig *config.APIConfig
+					for i := range cfg.Configs {
+						if cfg.Configs[i].Name == cfg.Default {
+							defaultConfig = &cfg.Configs[i]
+							break
+						}
+					}
+
+					if defaultConfig != nil {
+						if config.TestAPIConfig(*defaultConfig) {
+							ui.ShowSuccess("✓ Default configuration is working")
+						} else {
+							ui.ShowWarning("✗ Default configuration test failed")
+							ui.ShowWarning("  API may be unreachable or credentials may be invalid")
+							ui.ShowInfo("  Run 'codes add' to add a new configuration")
+							allGood = false
+						}
+					} else {
+						ui.ShowWarning("✗ Default configuration '%s' not found", cfg.Default)
+						ui.ShowWarning("  Run 'codes select' to choose a valid configuration")
+						allGood = false
+					}
+				}
+			}
+		}
+	}
+
+	fmt.Println()
+	ui.ShowInfo("─────────────────────────────────")
+	fmt.Println()
+
+	if allGood {
+		ui.ShowSuccess("✓ All checks passed! You're ready to use codes.")
+		fmt.Println()
+		ui.ShowInfo("Quick commands:")
+		ui.ShowInfo("  codes          - Run Claude with current configuration")
+		ui.ShowInfo("  codes select   - Switch between configurations")
+		ui.ShowInfo("  codes add      - Add a new configuration")
+	} else {
+		ui.ShowWarning("⚠ Some checks failed. Please review the messages above.")
+		fmt.Println()
+		ui.ShowInfo("Suggested actions:")
+		if _, err := exec.LookPath("claude"); err != nil {
+			ui.ShowInfo("  1. Install Claude CLI: codes update")
+		}
+		if _, err := os.Stat(config.ConfigPath); err != nil {
+			ui.ShowInfo("  2. Add a configuration: codes add")
+		}
+	}
+}
+
 func checkForUpdates() {
 	// 检查codes CLI更新
 	go func() {
