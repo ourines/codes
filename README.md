@@ -6,6 +6,8 @@ A powerful CLI tool for managing multiple Claude Code configurations with ease. 
 
 - **Multi-Configuration Management**: Manage multiple Claude API configurations (official Anthropic, proxies, or alternative providers)
 - **Easy Switching**: Quickly switch between configurations with an interactive selector
+- **Smart Directory Launch**: Remember last working directory and support project aliases for quick access
+- **Environment Import**: Automatically detect and import existing Claude configurations from environment variables
 - **Automatic Installation**: Automatically installs and updates Claude CLI when needed
 - **API Validation**: Tests API connectivity before saving configurations
 - **Cross-Platform**: Support for Linux, macOS, and Windows (amd64 & arm64)
@@ -100,6 +102,8 @@ An interactive menu will appear showing all your configurations. Select one to s
 Check your environment and validate your configuration. This command performs comprehensive checks including:
 
 - Verifies Claude CLI installation
+- Detects existing Claude configuration in environment variables
+- Offers to import existing configuration if found
 - Checks configuration file existence and validity
 - Tests API connectivity for the default configuration
 - Displays detailed status of all configurations
@@ -111,6 +115,7 @@ codes init
 **Example output:**
 ```
 ✓ Claude CLI is installed
+✓ Found existing configuration in environment variables
 ✓ Configuration file exists
 ✓ Found 3 configuration(s)
 ✓ Default configuration is working
@@ -120,10 +125,17 @@ This is a great command to run after installation or when troubleshooting issues
 
 ### `codes` (no arguments)
 
-Runs Claude CLI with the currently selected configuration. If Claude CLI is not installed, it will be automatically installed.
+Runs Claude CLI with the currently selected configuration in the last used directory. If Claude CLI is not installed, it will be automatically installed. The tool remembers your last working directory for convenience.
 
 ```bash
 codes
+```
+
+You can also specify a directory or project alias:
+
+```bash
+codes /path/to/project
+codes my-project  # if you've added a project alias
 ```
 
 ### `codes add`
@@ -150,7 +162,10 @@ Update or install a specific version of Claude CLI.
 codes update
 ```
 
-Lists the latest 5 available versions from npm and allows you to select one to install.
+Lists the latest 20 available versions from npm and allows you to:
+- Select a version by number (1-20)
+- Enter a specific version number (e.g., `1.2.3`)
+- Type `latest` to install the newest version
 
 ### `codes install`
 
@@ -162,6 +177,45 @@ codes install
 
 - **Linux/macOS**: Installs to `/usr/local/bin` or `~/bin`
 - **Windows**: Installs to `~/go/bin`
+
+### `codes start [path-or-project]`
+
+Start Claude Code in a specific directory or using a project alias. Without arguments, it uses the last working directory.
+
+```bash
+# Start in current directory (and remember it)
+codes start .
+
+# Start in specific path
+codes start /path/to/project
+
+# Start using project alias
+codes start my-project
+```
+
+### `codes project add <name> <path>`
+
+Add a project alias for quick access to frequently used directories.
+
+```bash
+codes project add my-app /path/to/my-app
+```
+
+### `codes project list`
+
+List all configured project aliases.
+
+```bash
+codes project list
+```
+
+### `codes project remove <name>`
+
+Remove a project alias.
+
+```bash
+codes project remove my-app
+```
 
 ### `codes version`
 
