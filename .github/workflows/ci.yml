@@ -24,7 +24,7 @@ jobs:
       run: go mod download
 
     - name: Build
-      run: go build -o codes ./cmd/codes
+      run: go build -o codes ./cmd
 
     - name: Test basic functionality
       run: |

@@ -47,7 +47,7 @@ jobs:
 
     - name: Build codes
       run: |
-        go build -o codes ./cmd/codes
+        go build -o codes ./cmd
 
     - name: Test
       run: |
