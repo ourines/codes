@@ -10,8 +10,10 @@ import (
 )
 
 type Config struct {
-	Configs []APIConfig `json:"configs"`
-	Default string      `json:"default"`
+	Configs     []APIConfig       `json:"configs"`
+	Default     string            `json:"default"`
+	Projects    map[string]string `json:"projects,omitempty"`    // 项目别名 -> 目录路径
+	LastWorkDir string            `json:"lastWorkDir,omitempty"` // 上次工作目录
 }
 
 type APIConfig struct {
@@ -145,4 +147,89 @@ func testBasicConnectivity(config APIConfig) bool {
 	}
 	resp.Body.Close()
 	return resp.StatusCode < 500 // 任何非服务器错误都算作可达
+}
+
+// SaveLastWorkDir 保存上次工作目录
+func SaveLastWorkDir(dir string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	cfg.LastWorkDir = dir
+	return SaveConfig(cfg)
+}
+
+// GetLastWorkDir 获取上次工作目录
+func GetLastWorkDir() (string, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return "", err
+	}
+
+	if cfg.LastWorkDir == "" {
+		homeDir, _ := os.UserHomeDir()
+		return homeDir, nil
+	}
+
+	return cfg.LastWorkDir, nil
+}
+
+// AddProject 添加项目别名
+func AddProject(name, path string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	if cfg.Projects == nil {
+		cfg.Projects = make(map[string]string)
+	}
+
+	cfg.Projects[name] = path
+	return SaveConfig(cfg)
+}
+
+// RemoveProject 删除项目别名
+func RemoveProject(name string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	if cfg.Projects == nil {
+		return nil
+	}
+
+	delete(cfg.Projects, name)
+	return SaveConfig(cfg)
+}
+
+// GetProjectPath 获取项目路径
+func GetProjectPath(name string) (string, bool) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return "", false
+	}
+
+	if cfg.Projects == nil {
+		return "", false
+	}
+
+	path, exists := cfg.Projects[name]
+	return path, exists
+}
+
+// ListProjects 列出所有项目
+func ListProjects() (map[string]string, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+
+	if cfg.Projects == nil {
+		return make(map[string]string), nil
+	}
+
+	return cfg.Projects, nil
 }
