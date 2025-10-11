@@ -1,0 +1,55 @@
+#!/bin/bash
+
+CONFIG_FILE="$(dirname "$0")/config.json"
+
+# 检查配置文件是否存在
+if [ ! -f "$CONFIG_FILE" ]; then
+    echo "Error: config.json not found"
+    exit 1
+fi
+
+# 读取配置
+configs=$(jq -r '.configs[] | @json' "$CONFIG_FILE")
+default_config=$(jq -r '.default' "$CONFIG_FILE")
+
+# 如果没有传递 --select 参数，使用默认配置
+selected_config=""
+if [ "$1" = "--select" ]; then
+    shift
+    echo "Available configurations:"
+    echo ""
+
+    # 显示配置列表
+    i=1
+    config_array=()
+    while IFS= read -r config; do
+        name=$(echo "$config" | jq -r '.name')
+        base_url=$(echo "$config" | jq -r '.ANTHROPIC_BASE_URL')
+        echo "  $i) $name ($base_url)"
+        config_array+=("$config")
+        ((i++))
+    done <<< "$configs"
+
+    echo ""
+    read -p "Select configuration (1-$((i-1))): " selection
+
+    if [ "$selection" -ge 1 ] && [ "$selection" -lt "$i" ]; then
+        selected_config="${config_array[$((selection-1))]}"
+    else
+        echo "Invalid selection"
+        exit 1
+    fi
+else
+    # 使用默认配置
+    selected_config=$(jq -r ".configs[] | select(.name == \"$default_config\") | @json" "$CONFIG_FILE")
+fi
+
+# 提取并导出环境变量（会覆盖已存在的值，但只在 claude 运行期间有效）
+while IFS= read -r line; do
+    key=$(echo "$line" | cut -d'=' -f1)
+    value=$(echo "$line" | cut -d'=' -f2-)
+    export "$key=$value"
+done < <(echo "$selected_config" | jq -r 'to_entries[] | select(.key != "name") | "\(.key)=\(.value)"')
+
+# 运行 claude 命令并传递其退出码
+claude "$@"
