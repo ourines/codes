@@ -11,14 +11,14 @@ import (
 
 type Config struct {
 	Configs []APIConfig `json:"configs"`
-	Default string    `json:"default"`
+	Default string      `json:"default"`
 }
 
 type APIConfig struct {
 	Name               string `json:"name"`
 	AnthropicBaseURL   string `json:"ANTHROPIC_BASE_URL"`
 	AnthropicAuthToken string `json:"ANTHROPIC_AUTH_TOKEN"`
-	Status           string `json:"status,omitempty"` // "active", "inactive", "unknown"
+	Status             string `json:"status,omitempty"` // "active", "inactive", "unknown"
 }
 
 var ConfigPath string

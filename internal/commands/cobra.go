@@ -14,7 +14,7 @@ var InstallCmd = &cobra.Command{
 	Short: "Install codes CLI to system",
 	Long:  "Install codes CLI to system PATH for global access",
 	Run: func(cmd *cobra.Command, args []string) {
-		runInstall()
+		RunInstall()
 	},
 }
 
@@ -24,7 +24,7 @@ var AddCmd = &cobra.Command{
 	Short: "Add a new Claude configuration",
 	Long:  "Interactively add a new Claude API configuration",
 	Run: func(cmd *cobra.Command, args []string) {
-		runAdd()
+		RunAdd()
 	},
 }
 
@@ -34,7 +34,7 @@ var SelectCmd = &cobra.Command{
 	Short: "Select Claude configuration",
 	Long:  "Interactively select which Claude configuration to use",
 	Run: func(cmd *cobra.Command, args []string) {
-		runSelect()
+		RunSelect()
 	},
 }
 
@@ -44,7 +44,7 @@ var UpdateCmd = &cobra.Command{
 	Short: "Update Claude to specific version",
 	Long:  "Update Claude CLI to a specific version",
 	Run: func(cmd *cobra.Command, args []string) {
-		runUpdate()
+		RunUpdate()
 	},
 }
 
@@ -54,7 +54,7 @@ var VersionCmd = &cobra.Command{
 	Short: "Show codes version",
 	Long:  "Show the version of codes CLI",
 	Run: func(cmd *cobra.Command, args []string) {
-		runVersion()
+		RunVersion()
 	},
 }
 
@@ -66,9 +66,9 @@ var RunCmd = &cobra.Command{
 		// Check if claude is installed
 		if _, err := exec.LookPath("claude"); err != nil {
 			ui.ShowLoading("Claude CLI not found. Installing...")
-			installClaude("latest")
+			InstallClaude("latest")
 			return
 		}
-		runClaudeWithConfig(args)
+		RunClaudeWithConfig(args)
 	},
 }

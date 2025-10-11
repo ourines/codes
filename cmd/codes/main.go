@@ -2,6 +2,7 @@ package main
 
 import (
 	"os"
+	"os/exec"
 
 	"github.com/spf13/cobra"
 
@@ -20,6 +21,16 @@ func init() {
 	rootCmd.AddCommand(commands.SelectCmd)
 	rootCmd.AddCommand(commands.UpdateCmd)
 	rootCmd.AddCommand(commands.VersionCmd)
+
+	// 设置默认运行时行为
+	rootCmd.Run = func(cmd *cobra.Command, args []string) {
+		// Check if claude is installed
+		if _, err := exec.LookPath("claude"); err != nil {
+			commands.RunClaudeWithConfig(nil)
+			return
+		}
+		commands.RunClaudeWithConfig(args)
+	}
 }
 
 func main() {

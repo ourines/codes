@@ -15,11 +15,11 @@ import (
 	"codes/internal/ui"
 )
 
-func runVersion() {
+func RunVersion() {
 	fmt.Printf("codes version dev (built unknown)\n")
 }
 
-func runSelect() {
+func RunSelect() {
 	// Load config
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -65,7 +65,7 @@ func runSelect() {
 	if selection == "" {
 		// 直接启动Claude
 		ui.ShowSuccess("Starting with current configuration...")
-		runClaudeWithConfig([]string{})
+		RunClaudeWithConfig([]string{})
 		return
 	}
 
@@ -83,14 +83,14 @@ func runSelect() {
 		ui.ShowInfo("API: %s", selectedConfig.AnthropicBaseURL)
 
 		// 立即启动Claude
-		runClaudeWithConfig([]string{})
+		RunClaudeWithConfig([]string{})
 	} else {
 		ui.ShowWarning("Invalid selection, starting with current config...")
-		runClaudeWithConfig([]string{})
+		RunClaudeWithConfig([]string{})
 	}
 }
 
-func runUpdate() {
+func RunUpdate() {
 	ui.ShowHeader("Claude Version Manager")
 	ui.ShowLoading("Fetching available versions...")
 
@@ -138,7 +138,7 @@ func runUpdate() {
 	}
 }
 
-func runAdd() {
+func RunAdd() {
 	ui.ShowHeader("Add New Claude Configuration")
 
 	// 检查是否已存在配置文件，如果不存在则创建
@@ -239,7 +239,7 @@ func runAdd() {
 	}
 }
 
-func runInstall() {
+func RunInstall() {
 	ui.ShowHeader("Installing codes CLI")
 
 	// 获取当前可执行文件路径
@@ -312,7 +312,10 @@ func runInstall() {
 	}
 }
 
-func runClaudeWithConfig(args []string) {
+func RunClaudeWithConfig(args []string) {
+	// 调用更新检查
+	checkForUpdates()
+
 	// Load and apply config
 	cfg, err := config.LoadConfig()
 	if err != nil {
@@ -331,7 +334,7 @@ func runClaudeWithConfig(args []string) {
 
 	// Set environment variables
 	os.Setenv("ANTHROPIC_BASE_URL", selectedConfig.AnthropicBaseURL)
-	os.Setenv("ANTROPIC_AUTH_TOKEN", selectedConfig.AnthropicAuthToken)
+	os.Setenv("ANTHROPIC_AUTH_TOKEN", selectedConfig.AnthropicAuthToken)
 
 	ui.ShowInfo("Using configuration: %s (%s)", selectedConfig.Name, selectedConfig.AnthropicBaseURL)
 	// Run claude with dangerous permissions
@@ -340,6 +343,10 @@ func runClaudeWithConfig(args []string) {
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Run()
+}
+
+func InstallClaude(version string) {
+	installClaude(version)
 }
 
 func installClaude(version string) {
@@ -351,4 +358,34 @@ func installClaude(version string) {
 		os.Exit(1)
 	}
 	ui.ShowSuccess("Claude installed successfully!")
+}
+
+func checkForUpdates() {
+	// 检查codes CLI更新
+	go func() {
+		// 简单的版本检查逻辑
+		// 这里可以集成GitHub API检查最新版本
+		// 目前只是占位符
+		// 可以通过检查GitHub releases API来获取最新版本
+		// 例如: https://api.github.com/repos/{owner}/{repo}/releases/latest
+		// 然后与当前版本比较，提示用户更新
+		//
+		// 示例实现:
+		// resp, err := http.Get("https://api.github.com/repos/yourusername/codes/releases/latest")
+		// if err != nil {
+		//     return
+		// }
+		// defer resp.Body.Close()
+		//
+		// var release struct {
+		//     TagName string `json:"tag_name"`
+		// }
+		// if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
+		//     return
+		// }
+		//
+		// if release.TagName != "dev" && release.TagName != currentVersion {
+		//     ui.ShowInfo("New version %s available! Run 'codes update' to upgrade.", release.TagName)
+		// }
+	}()
 }
