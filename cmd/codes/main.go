@@ -20,10 +20,12 @@ func init() {
 	rootCmd.AddCommand(commands.InstallCmd)
 	rootCmd.AddCommand(commands.AddCmd)
 	rootCmd.AddCommand(commands.SelectCmd)
+	rootCmd.AddCommand(commands.TestCmd)
 	rootCmd.AddCommand(commands.UpdateCmd)
 	rootCmd.AddCommand(commands.VersionCmd)
 	rootCmd.AddCommand(commands.StartCmd)
 	rootCmd.AddCommand(commands.ProjectCmd)
+	rootCmd.AddCommand(commands.ConfigCmd)
 
 	// 设置默认运行时行为 - 现在使用智能启动
 	rootCmd.Run = func(cmd *cobra.Command, args []string) {

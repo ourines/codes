@@ -48,6 +48,17 @@ var SelectCmd = &cobra.Command{
 	},
 }
 
+// TestCmd represents the test command
+var TestCmd = &cobra.Command{
+	Use:   "test [config-name]",
+	Short: "Test API configuration",
+	Long:  "Test API connectivity for all configurations or a specific one",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		RunTest(args)
+	},
+}
+
 // UpdateCmd represents the update command
 var UpdateCmd = &cobra.Command{
 	Use:   "update",
@@ -100,6 +111,35 @@ var ProjectCmd = &cobra.Command{
 	Long:  "Add, remove, or list project aliases for quick access",
 }
 
+// ConfigCmd represents the config command
+var ConfigCmd = &cobra.Command{
+	Use:   "config",
+	Short: "Manage configuration",
+	Long:  "Configure codes CLI settings",
+}
+
+// ConfigSetCmd represents the config set command
+var ConfigSetCmd = &cobra.Command{
+	Use:   "set <key> <value>",
+	Short: "Set a configuration value",
+	Long:  "Set a configuration value (keys: defaultBehavior)",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		RunConfigSet(args[0], args[1])
+	},
+}
+
+// ConfigGetCmd represents the config get command
+var ConfigGetCmd = &cobra.Command{
+	Use:   "get [key]",
+	Short: "Get configuration values",
+	Long:  "Get configuration values. If no key is specified, show all configuration",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		RunConfigGet(args)
+	},
+}
+
 // ProjectAddCmd represents the project add command
 var ProjectAddCmd = &cobra.Command{
 	Use:   "add <name> <path>",
@@ -136,4 +176,7 @@ func init() {
 	ProjectCmd.AddCommand(ProjectAddCmd)
 	ProjectCmd.AddCommand(ProjectRemoveCmd)
 	ProjectCmd.AddCommand(ProjectListCmd)
+
+	ConfigCmd.AddCommand(ConfigSetCmd)
+	ConfigCmd.AddCommand(ConfigGetCmd)
 }
