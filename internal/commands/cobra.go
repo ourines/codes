@@ -178,6 +178,54 @@ var DefaultBehaviorResetCmd = &cobra.Command{
 	},
 }
 
+// SkipPermissionsCmd represents the skippermissions command
+var SkipPermissionsCmd = &cobra.Command{
+	Use:   "skippermissions",
+	Short: "Manage global skipPermissions setting",
+	Long:  "Configure the global skipPermissions setting for all Claude configurations",
+}
+
+// SkipPermissionsSetCmd represents the skippermissions set command
+var SkipPermissionsSetCmd = &cobra.Command{
+	Use:   "set <true|false>",
+	Short: "Set the global skipPermissions",
+	Long:  "Set whether to use --dangerously-skip-permissions for all configurations that don't have their own setting",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		value := args[0]
+		var skip bool
+		if value == "true" {
+			skip = true
+		} else if value == "false" {
+			skip = false
+		} else {
+			ui.ShowError("Invalid value. Must be 'true' or 'false'", nil)
+			return
+		}
+		RunSkipPermissionsSet(skip)
+	},
+}
+
+// SkipPermissionsGetCmd represents the skippermissions get command
+var SkipPermissionsGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Get the global skipPermissions setting",
+	Long:  "Show the current global skipPermissions setting",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunSkipPermissionsGet()
+	},
+}
+
+// SkipPermissionsResetCmd represents the skippermissions reset command
+var SkipPermissionsResetCmd = &cobra.Command{
+	Use:   "reset",
+	Short: "Reset global skipPermissions",
+	Long:  "Reset the global skipPermissions to false (default)",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunSkipPermissionsReset()
+	},
+}
+
 // ProjectAddCmd represents the project add command
 var ProjectAddCmd = &cobra.Command{
 	Use:   "add <name> <path>",
@@ -221,4 +269,8 @@ func init() {
 	DefaultBehaviorCmd.AddCommand(DefaultBehaviorSetCmd)
 	DefaultBehaviorCmd.AddCommand(DefaultBehaviorGetCmd)
 	DefaultBehaviorCmd.AddCommand(DefaultBehaviorResetCmd)
+
+	SkipPermissionsCmd.AddCommand(SkipPermissionsSetCmd)
+	SkipPermissionsCmd.AddCommand(SkipPermissionsGetCmd)
+	SkipPermissionsCmd.AddCommand(SkipPermissionsResetCmd)
 }

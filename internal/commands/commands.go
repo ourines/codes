@@ -229,8 +229,7 @@ func RunAdd() {
 
 	// 基本必需环境变量
 	fmt.Println("\nBasic Configuration:")
-	ui.ShowInfo("Enter values for required and common environment variables.")
-	ui.ShowInfo("Press Enter to skip optional variables.")
+	ui.ShowInfo("Enter values for required environment variables.")
 
 	// 获取ANTHROPIC_BASE_URL（必需）
 	fmt.Print("Enter ANTHROPIC_BASE_URL (required): ")
@@ -243,7 +242,7 @@ func RunAdd() {
 	newConfig.Env["ANTHROPIC_BASE_URL"] = baseURL
 
 	// 获取认证令牌（必需）
-	fmt.Print("Enter ANTHROPIC_AUTH_TOKEN or ANTHROPIC_API_KEY (required): ")
+	fmt.Print("Enter ANTHROPIC_AUTH_TOKEN (required): ")
 	authToken, _ := reader.ReadString('\n')
 	authToken = strings.TrimSpace(authToken)
 	if authToken == "" {
@@ -257,12 +256,59 @@ func RunAdd() {
 	ui.ShowInfo("The following environment variables are optional. Press Enter to skip.")
 
 	// 询问可选的环境变量
+	modelVars := []string{
+		"ANTHROPIC_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+	}
+
+	// 其他可选环境变量
+	otherVars := make(map[string]string)
 	for envVar, description := range defaultVars {
+		// 跳过已设置的环境变量和模型变量
+		if _, exists := newConfig.Env[envVar]; exists {
+			continue
+		}
+		isModelVar := false
+		for _, mv := range modelVars {
+			if envVar == mv {
+				isModelVar = true
+				break
+			}
+		}
+		if !isModelVar {
+			otherVars[envVar] = description
+		}
+	}
+
+	// 首先询问模型相关的环境变量
+	fmt.Println("\nModel Configuration:")
+	ui.ShowInfo("These are model-specific variables. You can enter values or type 'skip' to use defaults.")
+
+	for _, envVar := range modelVars {
 		// 跳过已经设置的环境变量
 		if _, exists := newConfig.Env[envVar]; exists {
 			continue
 		}
 
+		description := defaultVars[envVar]
+		fmt.Printf("Enter %s (%s) [skip]: ", envVar, description)
+		value, _ := reader.ReadString('\n')
+		value = strings.TrimSpace(value)
+
+		if value == "skip" {
+			ui.ShowInfo("Skipping %s", envVar)
+		} else if value != "" {
+			newConfig.Env[envVar] = value
+		}
+	}
+
+	// 然后询问其他可选环境变量
+	fmt.Println("\nOther Optional Configuration:")
+	ui.ShowInfo("The following environment variables are optional. Press Enter to skip.")
+
+	for envVar, description := range otherVars {
 		fmt.Printf("Enter %s (%s): ", envVar, description)
 		value, _ := reader.ReadString('\n')
 		value = strings.TrimSpace(value)
@@ -1277,4 +1323,81 @@ func RunDefaultBehaviorReset() {
 	ui.ShowInfo("Previous behavior: %s", oldBehavior)
 	ui.ShowInfo("New behavior: current (default)")
 	ui.ShowInfo("Claude will now start in the current working directory by default.")
+}
+
+// RunSkipPermissionsSet 设置全局 skipPermissions
+func RunSkipPermissionsSet(skip bool) {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	oldValue := cfg.SkipPermissions
+	cfg.SkipPermissions = skip
+
+	if err := config.SaveConfig(cfg); err != nil {
+		ui.ShowError("Error saving config", err)
+		return
+	}
+
+	status := "enabled"
+	if !skip {
+		status = "disabled"
+	}
+	ui.ShowSuccess("Global skipPermissions %s", status)
+
+	fmt.Println()
+	ui.ShowInfo("Previous setting: %v", oldValue)
+	ui.ShowInfo("New setting: %v", skip)
+
+	if skip {
+		ui.ShowInfo("Claude will now run with --dangerously-skip-permissions for all configurations that don't have their own setting.")
+	} else {
+		ui.ShowInfo("Claude will run without --dangerously-skip-permissions unless a specific configuration has it enabled.")
+	}
+}
+
+// RunSkipPermissionsGet 获取全局 skipPermissions 设置
+func RunSkipPermissionsGet() {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	fmt.Printf("Global skipPermissions: %v\n", cfg.SkipPermissions)
+
+	if cfg.SkipPermissions {
+		ui.ShowInfo("Claude will run with --dangerously-skip-permissions for all configurations that don't have their own setting.")
+	} else {
+		ui.ShowInfo("Claude will run without --dangerously-skip-permissions unless a specific configuration has it enabled.")
+	}
+
+	fmt.Println()
+	ui.ShowInfo("Individual configuration settings override this global setting.")
+	ui.ShowInfo("Use 'codes config get' to see all configurations and their skipPermissions settings.")
+}
+
+// RunSkipPermissionsReset 重置全局 skipPermissions
+func RunSkipPermissionsReset() {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	oldValue := cfg.SkipPermissions
+	cfg.SkipPermissions = false // 重置为 false
+
+	if err := config.SaveConfig(cfg); err != nil {
+		ui.ShowError("Error saving config", err)
+		return
+	}
+
+	ui.ShowSuccess("Global skipPermissions reset to: false")
+	fmt.Println()
+	ui.ShowInfo("Previous setting: %v", oldValue)
+	ui.ShowInfo("New setting: false (default)")
+	ui.ShowInfo("Claude will now run without --dangerously-skip-permissions unless a specific configuration has it enabled.")
 }
