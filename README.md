@@ -9,9 +9,12 @@ A powerful CLI tool for managing multiple Claude Code configurations with ease. 
 - **Smart Directory Launch**: Remember last working directory and support project aliases for quick access
 - **Environment Import**: Automatically detect and import existing Claude configurations from environment variables
 - **Automatic Installation**: Automatically installs and updates Claude CLI when needed
-- **API Validation**: Tests API connectivity before saving configurations
+- **API Validation**: Tests API connectivity before saving configurations and provides testing tools
 - **Cross-Platform**: Support for Linux, macOS, and Windows (amd64 & arm64)
 - **Zero Configuration**: Works out of the box with sensible defaults
+- **Configuration Management**: Global configuration settings for CLI behavior
+- **Permission Control**: Manage --dangerously-skip-permissions flag for Claude CLI
+- **Flexible Startup Behavior**: Control where Claude starts when no arguments provided
 
 ## Installation
 
@@ -167,6 +170,105 @@ Lists the latest 20 available versions from npm and allows you to:
 - Enter a specific version number (e.g., `1.2.3`)
 - Type `latest` to install the newest version
 
+### `codes test`
+
+Test API configuration connectivity and validate configurations.
+
+```bash
+# Test all configured API endpoints
+codes test
+
+# Test a specific configuration
+codes test my-config
+```
+
+**Features**:
+- Tests API connectivity using actual Claude API endpoint (`/v1/messages`)
+- Shows model being used for each test
+- Updates configuration status (active/inactive) based on test results
+- Displays test results with clear success/failure indicators
+- Tests all environment variables including authentication tokens and base URLs
+- Validates that required fields are present and properly formatted
+
+### `codes config`
+
+Manage global CLI configuration settings.
+
+```bash
+# Show all configuration values
+codes config get
+
+# Show specific configuration value
+codes config get <key>
+
+# Set configuration value
+codes config set <key> <value>
+```
+
+**Current Configuration Keys**:
+- `defaultBehavior` - Controls where Claude starts when no arguments are provided
+
+**Environment Variables Managed**:
+- While the config command itself doesn't directly manage environment variables, it works with configurations that contain environment variables for:
+  - `ANTHROPIC_BASE_URL` - API endpoint URL
+  - `ANTHROPIC_AUTH_TOKEN` - Authentication token
+  - `ANTHROPIC_MODEL` - Default model
+  - `ANTHROPIC_DEFAULT_HAIKU_MODEL` - Haiku model override
+  - `ANTHROPIC_DEFAULT_OPUS_MODEL` - Opus model override
+  - `ANTHROPIC_DEFAULT_SONNET_MODEL` - Sonnet model override
+  - And other Claude CLI recognized environment variables
+
+### `codes defaultbehavior`
+
+Manage the default startup behavior when running `codes` without arguments.
+
+```bash
+# Show current default behavior
+codes defaultbehavior get
+
+# Set default behavior
+codes defaultbehavior set <behavior>
+
+# Reset to default
+codes defaultbehavior reset
+```
+
+**Available Behaviors**:
+- `current` - Start Claude in the current working directory (default)
+- `last` - Start Claude in the last used directory (remembered from previous runs)
+- `home` - Start Claude in the user's home directory
+
+**Important Details**:
+- Behavior is saved in config.json under `DefaultBehavior` field
+- When `codes` is run without arguments, it uses this setting to determine the working directory
+- The `codes start` command still works with project aliases and specific paths
+
+### `codes skippermissions`
+
+Manage the global `--dangerously-skip-permissions` flag setting for Claude CLI.
+
+```bash
+# Show current global skipPermissions setting
+codes skippermissions get
+
+# Set global skipPermissions
+codes skippermissions set <true|false>
+
+# Reset to default
+codes skippermissions reset
+```
+
+**How It Works**:
+- Global setting applies to all configurations that don't have their own `skipPermissions` setting
+- When `true`, Claude runs with `--dangerously-skip-permissions` flag
+- When `false` (default), Claude runs without the flag
+- Individual configurations can override this global setting during `codes add` or by editing the config file
+
+**Important Details**:
+- Setting is stored in config.json under `SkipPermissions` field
+- Individual configurations can have their own `skipPermissions` setting that takes precedence
+- This controls whether Claude bypasses certain security checks for file system access
+
 ### `codes install`
 
 Install the codes binary to your system PATH.
@@ -243,26 +345,42 @@ Create a `config.json` file with the following structure:
   "configs": [
     {
       "name": "official",
-      "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
-      "ANTHROPIC_AUTH_TOKEN": "sk-ant-xxxxx"
-    },
-    {
-      "name": "proxy",
-      "ANTHROPIC_BASE_URL": "https://your-proxy.com/api",
-      "ANTHROPIC_AUTH_TOKEN": "your-token"
+      "env": {
+        "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+        "ANTHROPIC_AUTH_TOKEN": "sk-ant-xxxxx",
+        "ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022"
+      },
+      "skipPermissions": false
     }
   ],
-  "default": "official"
+  "default": "official",
+  "skipPermissions": false,
+  "defaultBehavior": "current",
+  "projects": {
+    "my-project": "/path/to/project"
+  },
+  "lastWorkDir": "/path/to/last/directory"
 }
 ```
 
 ### Configuration Fields
 
-- `name`: Unique identifier for the configuration
-- `ANTHROPIC_BASE_URL`: Base URL for the Claude API endpoint
-- `ANTHROPIC_AUTH_TOKEN`: Authentication token for the API
-- `status`: (optional) API status - "active", "inactive", or "unknown"
+#### Global Settings
 - `default`: The configuration name to use by default
+- `skipPermissions`: Global setting for `--dangerously-skip-permissions` flag (applies to all configs unless overridden)
+- `defaultBehavior`: Controls where Claude starts when no arguments provided ("current", "last", "home")
+- `projects`: Object mapping project names to their directory paths
+- `lastWorkDir`: Last working directory remembered from previous runs
+
+#### Configuration Object
+- `name`: Unique identifier for the configuration
+- `env`: Object containing environment variables for Claude CLI:
+  - `ANTHROPIC_BASE_URL`: Base URL for the Claude API endpoint
+  - `ANTHROPIC_AUTH_TOKEN`: Authentication token for the API
+  - `ANTHROPIC_MODEL`: Default model to use
+  - And other Claude CLI recognized environment variables
+- `skipPermissions`: Per-configuration setting that overrides global `skipPermissions`
+- `status`: (optional) API status - "active", "inactive", or "unknown"
 
 ### Example Configurations
 
