@@ -1098,14 +1098,15 @@ func testSingleConfiguration(apiConfig *config.APIConfig) {
 // testAllConfigurations 测试所有配置
 func testAllConfigurations(configs []config.APIConfig) {
 	results := make(map[string]bool)
+	statuses := make(map[string]string)
 	successCount := 0
 
 	fmt.Println()
-	for _, cfg := range configs {
-		fmt.Printf("Testing %s...", cfg.Name)
+	for i := range configs {
+		fmt.Printf("Testing %s...", configs[i].Name)
 
 		// 获取模型信息
-		envVars := config.GetEnvironmentVars(&cfg)
+		envVars := config.GetEnvironmentVars(&configs[i])
 		model := envVars["ANTHROPIC_MODEL"]
 		if model == "" {
 			model = envVars["ANTHROPIC_DEFAULT_HAIKU_MODEL"]
@@ -1115,16 +1116,16 @@ func testAllConfigurations(configs []config.APIConfig) {
 		}
 
 		// 测试 API 连接
-		success := config.TestAPIConfig(cfg)
-		results[cfg.Name] = success
+		success := config.TestAPIConfig(configs[i])
+		results[configs[i].Name] = success
 
 		if success {
 			fmt.Printf(" ✓ (Model: %s)\n", model)
-			cfg.Status = "active"
+			statuses[configs[i].Name] = "active"
 			successCount++
 		} else {
 			fmt.Printf(" ✗ (Model: %s)\n", model)
-			cfg.Status = "inactive"
+			statuses[configs[i].Name] = "inactive"
 		}
 	}
 
@@ -1153,13 +1154,10 @@ func testAllConfigurations(configs []config.APIConfig) {
 	// 更新所有配置状态
 	updated := false
 	for i := range cfg.Configs {
-		for j := range configs {
-			if cfg.Configs[i].Name == configs[j].Name {
-				if cfg.Configs[i].Status != configs[j].Status {
-					cfg.Configs[i].Status = configs[j].Status
-					updated = true
-				}
-				break
+		if newStatus, ok := statuses[cfg.Configs[i].Name]; ok {
+			if cfg.Configs[i].Status != newStatus {
+				cfg.Configs[i].Status = newStatus
+				updated = true
 			}
 		}
 	}
