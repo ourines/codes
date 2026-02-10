@@ -70,15 +70,21 @@ main() {
     chmod +x "$TMPFILE"
     ok "Downloaded successfully"
 
-    # Try /usr/local/bin first, fall back to ~/bin
+    # Try /usr/local/bin first, sudo if needed, fall back to ~/bin
+    installed=false
     if [ -w "$INSTALL_DIR" ]; then
         mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}"
         ok "Installed to ${INSTALL_DIR}/${BINARY}"
+        installed=true
     elif command -v sudo >/dev/null 2>&1; then
         info "Installing to ${INSTALL_DIR} (requires sudo)..."
-        sudo mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}"
-        ok "Installed to ${INSTALL_DIR}/${BINARY}"
-    else
+        if sudo mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}" 2>/dev/null; then
+            ok "Installed to ${INSTALL_DIR}/${BINARY}"
+            installed=true
+        fi
+    fi
+
+    if [ "$installed" = false ]; then
         INSTALL_DIR="${HOME}/bin"
         mkdir -p "$INSTALL_DIR"
         mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}"

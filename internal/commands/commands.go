@@ -507,7 +507,7 @@ func installBinary() (string, bool) {
 	executablePath, _ = filepath.EvalSymlinks(executablePath)
 	targetResolved, _ := filepath.EvalSymlinks(installPath)
 	if executablePath == targetResolved {
-		ui.ShowSuccess("✓ codes is already installed at %s", installPath)
+		ui.ShowSuccess("codes is already installed at %s", installPath)
 		return installPath, false
 	}
 
@@ -537,7 +537,7 @@ func installBinary() (string, bool) {
 		return "", false
 	}
 
-	ui.ShowSuccess("✓ codes installed to %s", installPath)
+	ui.ShowSuccess("codes installed to %s", installPath)
 
 	if runtime.GOOS != "windows" && targetDir != "/usr/local/bin" {
 		ui.ShowWarning("  Make sure %s is in your PATH", targetDir)
@@ -550,7 +550,7 @@ func installBinary() (string, bool) {
 func installShellCompletion() bool {
 	shellPath := os.Getenv("SHELL")
 	if shellPath == "" {
-		ui.ShowWarning("⚠ Could not detect shell, skipping completion setup")
+		ui.ShowWarning("Could not detect shell, skipping completion setup")
 		return false
 	}
 
@@ -579,7 +579,7 @@ func installShellCompletion() bool {
 		}
 		completionFile := filepath.Join(completionDir, "codes.fish")
 		if _, err := os.Stat(completionFile); err == nil {
-			ui.ShowSuccess("✓ Fish completion already installed at %s", completionFile)
+			ui.ShowSuccess("Fish completion already installed at %s", completionFile)
 			return true
 		}
 		content := "# codes CLI completion\ncodes completion fish | source\n"
@@ -587,9 +587,9 @@ func installShellCompletion() bool {
 			ui.ShowError("Failed to write fish completion", err)
 			return false
 		}
-		ui.ShowSuccess("✓ Fish completion installed at %s", completionFile)
+		ui.ShowSuccess("Fish completion installed at %s", completionFile)
 	default:
-		ui.ShowWarning("⚠ Unsupported shell: %s, skipping completion setup", shell)
+		ui.ShowWarning("Unsupported shell: %s, skipping completion setup", shell)
 		ui.ShowInfo("  You can manually run: codes completion --help")
 		return false
 	}
@@ -600,7 +600,7 @@ func installShellCompletion() bool {
 func appendCompletionLine(configFile, completionLine string) {
 	if data, err := os.ReadFile(configFile); err == nil {
 		if strings.Contains(string(data), "codes completion") {
-			ui.ShowSuccess("✓ Shell completion already configured in %s", configFile)
+			ui.ShowSuccess("Shell completion already configured in %s", configFile)
 			return
 		}
 	}
@@ -617,7 +617,7 @@ func appendCompletionLine(configFile, completionLine string) {
 		return
 	}
 
-	ui.ShowSuccess("✓ Shell completion installed in %s", configFile)
+	ui.ShowSuccess("Shell completion installed in %s", configFile)
 }
 
 func RunInit() {
@@ -628,7 +628,7 @@ func RunInit() {
 
 	// 1. Install binary to system PATH
 	ui.ShowInfo("Installing codes CLI...")
-	if _, ok := installBinary(); !ok {
+	if path, _ := installBinary(); path == "" {
 		allGood = false
 	}
 	fmt.Println()
@@ -643,11 +643,11 @@ func RunInit() {
 	// 3. Check if Claude CLI is installed
 	ui.ShowInfo("Checking Claude CLI installation...")
 	if _, err := exec.LookPath("claude"); err != nil {
-		ui.ShowError("✗ Claude CLI not found", nil)
+		ui.ShowError("Claude CLI not found", nil)
 		ui.ShowWarning("  Run 'codes update' to install Claude CLI")
 		allGood = false
 	} else {
-		ui.ShowSuccess("✓ Claude CLI is installed")
+		ui.ShowSuccess("Claude CLI is installed")
 
 		// Check Claude version
 		cmd := exec.Command("claude", "--version")
@@ -666,12 +666,12 @@ func RunInit() {
 
 	hasEnvConfig := false
 	if baseURL != "" && authToken != "" {
-		ui.ShowSuccess("✓ Found existing configuration in environment variables")
+		ui.ShowSuccess("Found existing configuration in environment variables")
 		ui.ShowInfo("  ANTHROPIC_BASE_URL: %s", baseURL)
 		ui.ShowInfo("  ANTHROPIC_AUTH_TOKEN: %s...", authToken[:min(10, len(authToken))])
 		hasEnvConfig = true
 	} else if baseURL != "" || authToken != "" {
-		ui.ShowWarning("⚠ Incomplete environment configuration detected")
+		ui.ShowWarning("Incomplete environment configuration detected")
 		if baseURL != "" {
 			ui.ShowInfo("  ANTHROPIC_BASE_URL: %s", baseURL)
 		}
@@ -719,10 +719,10 @@ func RunInit() {
 			cfg.Default = name
 
 			if config.TestAPIConfig(testConfig) {
-				ui.ShowSuccess("✓ API connection successful!")
+				ui.ShowSuccess("API connection successful!")
 				testConfig.Status = "active"
 			} else {
-				ui.ShowWarning("⚠ API connection failed, but configuration will be saved")
+				ui.ShowWarning("API connection failed, but configuration will be saved")
 				testConfig.Status = "inactive"
 			}
 
@@ -733,7 +733,7 @@ func RunInit() {
 				ui.ShowError("Failed to save configuration", err)
 				allGood = false
 			} else {
-				ui.ShowSuccess("✓ Configuration imported successfully!")
+				ui.ShowSuccess("Configuration imported successfully!")
 				ui.ShowInfo("  Name: %s", name)
 				ui.ShowInfo("  Status: %s", testConfig.Status)
 				configExists = true
@@ -744,18 +744,18 @@ func RunInit() {
 
 	// Continue with normal config check
 	if !configExists {
-		ui.ShowError("✗ Configuration file not found", nil)
+		ui.ShowError("Configuration file not found", nil)
 		ui.ShowInfo("  Expected location: %s", config.ConfigPath)
 		ui.ShowWarning("  Run 'codes add' to create your first configuration")
 		allGood = false
 	} else {
-		ui.ShowSuccess("✓ Configuration file exists")
+		ui.ShowSuccess("Configuration file exists")
 		ui.ShowInfo("  Location: %s", config.ConfigPath)
 
 		// 6. Validate configuration
 		cfg, err := config.LoadConfig()
 		if err != nil {
-			ui.ShowError("✗ Failed to load configuration", err)
+			ui.ShowError("Failed to load configuration", err)
 			ui.ShowWarning("  Your config file may be corrupted")
 			allGood = false
 		} else {
@@ -764,7 +764,7 @@ func RunInit() {
 				ui.ShowWarning("  Run 'codes add' to add a configuration")
 				allGood = false
 			} else {
-				ui.ShowSuccess("✓ Found %d configuration(s)", len(cfg.Configs))
+				ui.ShowSuccess("Found %d configuration(s)", len(cfg.Configs))
 
 				// Show configurations with status
 				fmt.Println()
@@ -835,7 +835,7 @@ func RunInit() {
 
 					if defaultConfig != nil {
 						if config.TestAPIConfig(*defaultConfig) {
-							ui.ShowSuccess("✓ Default configuration is working")
+							ui.ShowSuccess("Default configuration is working")
 						} else {
 							ui.ShowWarning("✗ Default configuration test failed")
 							ui.ShowWarning("  API may be unreachable or credentials may be invalid")
@@ -857,14 +857,14 @@ func RunInit() {
 	fmt.Println()
 
 	if allGood {
-		ui.ShowSuccess("✓ All checks passed! You're ready to use codes.")
+		ui.ShowSuccess("All checks passed! You're ready to use codes.")
 		fmt.Println()
 		ui.ShowInfo("Quick commands:")
 		ui.ShowInfo("  codes          - Run Claude with current configuration")
 		ui.ShowInfo("  codes select   - Switch between configurations")
 		ui.ShowInfo("  codes add      - Add a new configuration")
 	} else {
-		ui.ShowWarning("⚠ Some checks failed. Please review the messages above.")
+		ui.ShowWarning("Some checks failed. Please review the messages above.")
 		fmt.Println()
 		ui.ShowInfo("Suggested actions:")
 		if _, err := exec.LookPath("claude"); err != nil {
@@ -1162,10 +1162,10 @@ func testSingleConfiguration(apiConfig *config.APIConfig) {
 	// 测试 API 连接
 	ui.ShowLoading("Testing API connection...")
 	if config.TestAPIConfig(*apiConfig) {
-		ui.ShowSuccess("✓ API connection successful!")
+		ui.ShowSuccess("API connection successful!")
 		apiConfig.Status = "active"
 	} else {
-		ui.ShowError("✗ API connection failed", nil)
+		ui.ShowError("API connection failed", nil)
 		apiConfig.Status = "inactive"
 		ui.ShowWarning("Check your configuration and network connectivity")
 	}
