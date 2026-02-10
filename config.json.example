@@ -2,19 +2,41 @@
   "configs": [
     {
       "name": "official",
-      "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
-      "ANTHROPIC_AUTH_TOKEN": "sk-ant-xxxxxxxxxxxxxxxxxxxxx"
+      "env": {
+        "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+        "ANTHROPIC_AUTH_TOKEN": "sk-ant-xxxxxxxxxxxxxxxxxxxxx",
+        "ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022",
+        "MAX_THINKING_TOKENS": "32768"
+      },
+      "skipPermissions": false
     },
     {
       "name": "proxy",
-      "ANTHROPIC_BASE_URL": "https://your-proxy.example.com/api",
-      "ANTHROPIC_AUTH_TOKEN": "your-proxy-token"
+      "env": {
+        "ANTHROPIC_BASE_URL": "https://your-proxy.example.com/api",
+        "ANTHROPIC_AUTH_TOKEN": "your-proxy-token",
+        "ANTHROPIC_API_KEY": "your-proxy-api-key",
+        "HTTP_PROXY": "http://proxy.example.com:8080",
+        "HTTPS_PROXY": "http://proxy.example.com:8080",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "claude-3-haiku-20240307-custom",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "claude-3-sonnet-20240229-custom"
+      },
+      "skipPermissions": true
     },
     {
-      "name": "alternative",
-      "ANTHROPIC_BASE_URL": "https://api.alternative-provider.com",
-      "ANTHROPIC_AUTH_TOKEN": "your-alternative-token"
+      "name": "custom-model",
+      "env": {
+        "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+        "ANTHROPIC_AUTH_TOKEN": "sk-ant-xxxxxxxxxxxxxxxxxxxxx",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL": "my-custom-haiku-model",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL": "my-custom-sonnet-model",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL": "my-custom-opus-model",
+        "CLAUDE_CODE_API_KEY_HELPER_TTL_MS": "3600000",
+        "MAX_THINKING_TOKENS": "65536"
+      }
     }
   ],
-  "default": "official"
+  "default": "official",
+  "skipPermissions": false,
+  "defaultBehavior": "current"
 }

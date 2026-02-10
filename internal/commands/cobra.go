@@ -6,6 +6,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"codes/internal/ui"
+	"strings"
 )
 
 // InitCmd represents the init command
@@ -45,6 +46,17 @@ var SelectCmd = &cobra.Command{
 	Long:  "Interactively select which Claude configuration to use",
 	Run: func(cmd *cobra.Command, args []string) {
 		RunSelect()
+	},
+}
+
+// TestCmd represents the test command
+var TestCmd = &cobra.Command{
+	Use:   "test [config-name]",
+	Short: "Test API configuration",
+	Long:  "Test API connectivity for all configurations or a specific one",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		RunTest(args)
 	},
 }
 
@@ -100,6 +112,122 @@ var ProjectCmd = &cobra.Command{
 	Long:  "Add, remove, or list project aliases for quick access",
 }
 
+// ConfigCmd represents the config command
+var ConfigCmd = &cobra.Command{
+	Use:   "config",
+	Short: "Manage configuration",
+	Long:  "Configure codes CLI settings",
+}
+
+// ConfigSetCmd represents the config set command
+var ConfigSetCmd = &cobra.Command{
+	Use:   "set <key> <value>",
+	Short: "Set a configuration value",
+	Long:  "Set a configuration value (keys: defaultBehavior)",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		RunConfigSet(args[0], args[1])
+	},
+}
+
+// ConfigGetCmd represents the config get command
+var ConfigGetCmd = &cobra.Command{
+	Use:   "get [key]",
+	Short: "Get configuration values",
+	Long:  "Get configuration values. If no key is specified, show all configuration",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		RunConfigGet(args)
+	},
+}
+
+// DefaultBehaviorCmd represents the default behavior command
+var DefaultBehaviorCmd = &cobra.Command{
+	Use:   "defaultbehavior",
+	Short: "Manage default behavior setting",
+	Long:  "Configure what directory to use when starting Claude without arguments",
+}
+
+// DefaultBehaviorSetCmd represents the defaultbehavior set command
+var DefaultBehaviorSetCmd = &cobra.Command{
+	Use:   "set <behavior>",
+	Short: "Set the default behavior",
+	Long:  "Set the default startup behavior: 'current' (current directory), 'last' (last used directory), 'home' (home directory)",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		RunDefaultBehaviorSet(args[0])
+	},
+}
+
+// DefaultBehaviorGetCmd represents the defaultbehavior get command
+var DefaultBehaviorGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Get the current default behavior",
+	Long:  "Show the current default behavior setting",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunDefaultBehaviorGet()
+	},
+}
+
+// DefaultBehaviorResetCmd represents the defaultbehavior reset command
+var DefaultBehaviorResetCmd = &cobra.Command{
+	Use:   "reset",
+	Short: "Reset to default behavior",
+	Long:  "Reset the default behavior to 'current' (default)",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunDefaultBehaviorReset()
+	},
+}
+
+// SkipPermissionsCmd represents the skippermissions command
+var SkipPermissionsCmd = &cobra.Command{
+	Use:   "skippermissions",
+	Short: "Manage global skipPermissions setting",
+	Long:  "Configure the global skipPermissions setting for all Claude configurations",
+}
+
+// SkipPermissionsSetCmd represents the skippermissions set command
+var SkipPermissionsSetCmd = &cobra.Command{
+	Use:   "set <true|false>",
+	Short: "Set the global skipPermissions",
+	Long:  "Set whether to use --dangerously-skip-permissions for all configurations that don't have their own setting",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		value := strings.ToLower(args[0])
+		var skip bool
+		switch value {
+		case "true", "t", "yes", "y", "1":
+			skip = true
+		case "false", "f", "no", "n", "0":
+			skip = false
+		default:
+			ui.ShowError("Invalid value. Must be 'true' or 'false' (case-insensitive)", nil)
+			return
+		}
+		RunSkipPermissionsSet(skip)
+	},
+}
+
+// SkipPermissionsGetCmd represents the skippermissions get command
+var SkipPermissionsGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Get the global skipPermissions setting",
+	Long:  "Show the current global skipPermissions setting",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunSkipPermissionsGet()
+	},
+}
+
+// SkipPermissionsResetCmd represents the skippermissions reset command
+var SkipPermissionsResetCmd = &cobra.Command{
+	Use:   "reset",
+	Short: "Reset global skipPermissions",
+	Long:  "Reset the global skipPermissions to false (default)",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunSkipPermissionsReset()
+	},
+}
+
 // ProjectAddCmd represents the project add command
 var ProjectAddCmd = &cobra.Command{
 	Use:   "add <name> <path>",
@@ -136,4 +264,15 @@ func init() {
 	ProjectCmd.AddCommand(ProjectAddCmd)
 	ProjectCmd.AddCommand(ProjectRemoveCmd)
 	ProjectCmd.AddCommand(ProjectListCmd)
+
+	ConfigCmd.AddCommand(ConfigSetCmd)
+	ConfigCmd.AddCommand(ConfigGetCmd)
+
+	DefaultBehaviorCmd.AddCommand(DefaultBehaviorSetCmd)
+	DefaultBehaviorCmd.AddCommand(DefaultBehaviorGetCmd)
+	DefaultBehaviorCmd.AddCommand(DefaultBehaviorResetCmd)
+
+	SkipPermissionsCmd.AddCommand(SkipPermissionsSetCmd)
+	SkipPermissionsCmd.AddCommand(SkipPermissionsGetCmd)
+	SkipPermissionsCmd.AddCommand(SkipPermissionsResetCmd)
 }
