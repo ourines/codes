@@ -40,25 +40,30 @@ func RunSelect() {
 	fmt.Println()
 
 	for i, c := range cfg.Configs {
+		apiURL := c.Env["ANTHROPIC_BASE_URL"]
+		if apiURL == "" {
+			apiURL = "unknown"
+		}
+
 		if c.Name == cfg.Default {
 			if c.Status == "active" {
-				ui.ShowCurrentConfig(i+1, c.Name, c.AnthropicBaseURL)
+				ui.ShowCurrentConfig(i+1, c.Name, apiURL)
 				ui.ShowInfo("     Status: Active")
 			} else if c.Status == "inactive" {
-				ui.ShowCurrentConfig(i+1, c.Name, c.AnthropicBaseURL)
+				ui.ShowCurrentConfig(i+1, c.Name, apiURL)
 				ui.ShowWarning("     Status: Inactive")
 			} else {
-				ui.ShowCurrentConfig(i+1, c.Name, c.AnthropicBaseURL)
+				ui.ShowCurrentConfig(i+1, c.Name, apiURL)
 			}
 		} else {
 			if c.Status == "active" {
-				ui.ShowConfigOption(i+1, c.Name, c.AnthropicBaseURL)
+				ui.ShowConfigOption(i+1, c.Name, apiURL)
 				ui.ShowInfo("     Status: Active")
 			} else if c.Status == "inactive" {
-				ui.ShowConfigOption(i+1, c.Name, c.AnthropicBaseURL)
+				ui.ShowConfigOption(i+1, c.Name, apiURL)
 				ui.ShowWarning("     Status: Inactive")
 			} else {
-				ui.ShowConfigOption(i+1, c.Name, c.AnthropicBaseURL)
+				ui.ShowConfigOption(i+1, c.Name, apiURL)
 			}
 		}
 	}
@@ -88,7 +93,11 @@ func RunSelect() {
 		}
 
 		ui.ShowSuccess("Selected: %s", selectedConfig.Name)
-		ui.ShowInfo("API: %s", selectedConfig.AnthropicBaseURL)
+		apiURL := selectedConfig.Env["ANTHROPIC_BASE_URL"]
+		if apiURL == "" {
+			apiURL = "unknown"
+		}
+		ui.ShowInfo("API: %s", apiURL)
 
 		// 立即启动Claude
 		RunClaudeWithConfig([]string{})
@@ -209,48 +218,158 @@ func RunAdd() {
 		}
 	}
 
-	// 获取API URL
-	fmt.Print("Enter ANTHROPIC_BASE_URL: ")
+	// 创建新的API配置
+	newConfig := config.APIConfig{
+		Name: name,
+		Env:  make(map[string]string),
+	}
+
+	// 显示常用环境变量提示
+	defaultVars := config.GetDefaultEnvironmentVars()
+
+	// 基本必需环境变量
+	fmt.Println("\nBasic Configuration:")
+	ui.ShowInfo("Enter values for required environment variables.")
+
+	// 获取ANTHROPIC_BASE_URL（必需）
+	fmt.Print("Enter ANTHROPIC_BASE_URL (required): ")
 	baseURL, _ := reader.ReadString('\n')
 	baseURL = strings.TrimSpace(baseURL)
 	if baseURL == "" {
 		ui.ShowError("Base URL cannot be empty", nil)
 		return
 	}
+	newConfig.Env["ANTHROPIC_BASE_URL"] = baseURL
 
-	// 验证URL格式
-	if !strings.HasPrefix(baseURL, "http://") && !strings.HasPrefix(baseURL, "https://") {
-		ui.ShowError("Invalid URL format. Must start with http:// or https://", nil)
+	// 获取认证令牌（必需）
+	fmt.Print("Enter ANTHROPIC_AUTH_TOKEN (required): ")
+	authToken, _ := reader.ReadString('\n')
+	authToken = strings.TrimSpace(authToken)
+	if authToken == "" {
+		ui.ShowError("Authentication token cannot be empty", nil)
 		return
 	}
+	newConfig.Env["ANTHROPIC_AUTH_TOKEN"] = authToken
 
-	// 获取API Token
-	fmt.Print("Enter ANTHROPIC_AUTH_TOKEN: ")
-	token, _ := reader.ReadString('\n')
-	token = strings.TrimSpace(token)
-	if token == "" {
-		ui.ShowError("Auth token cannot be empty", nil)
-		return
+	// 显示可选环境变量
+	fmt.Println("\nOptional Configuration:")
+	ui.ShowInfo("The following environment variables are optional. Press Enter to skip.")
+
+	// 询问可选的环境变量
+	modelVars := []string{
+		"ANTHROPIC_MODEL",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL",
+	}
+
+	// 其他可选环境变量
+	otherVars := make(map[string]string)
+	for envVar, description := range defaultVars {
+		// 跳过已设置的环境变量和模型变量
+		if _, exists := newConfig.Env[envVar]; exists {
+			continue
+		}
+		isModelVar := false
+		for _, mv := range modelVars {
+			if envVar == mv {
+				isModelVar = true
+				break
+			}
+		}
+		if !isModelVar {
+			otherVars[envVar] = description
+		}
+	}
+
+	// 首先询问模型相关的环境变量
+	fmt.Println("\nModel Configuration:")
+	ui.ShowInfo("These are model-specific variables. You can enter values or type 'skip' to use defaults.")
+
+	for _, envVar := range modelVars {
+		// 跳过已经设置的环境变量
+		if _, exists := newConfig.Env[envVar]; exists {
+			continue
+		}
+
+		description := defaultVars[envVar]
+		fmt.Printf("Enter %s (%s) [skip]: ", envVar, description)
+		value, _ := reader.ReadString('\n')
+		value = strings.TrimSpace(value)
+
+		if value == "skip" {
+			ui.ShowInfo("Skipping %s", envVar)
+		} else if value != "" {
+			newConfig.Env[envVar] = value
+		}
+	}
+
+	// 然后询问其他可选环境变量
+	fmt.Println("\nOther Optional Configuration:")
+	ui.ShowInfo("The following environment variables are optional. Press Enter to skip.")
+
+	for envVar, description := range otherVars {
+		fmt.Printf("Enter %s (%s): ", envVar, description)
+		value, _ := reader.ReadString('\n')
+		value = strings.TrimSpace(value)
+		if value != "" {
+			newConfig.Env[envVar] = value
+		}
+	}
+
+	// 询问是否要设置其他环境变量
+	fmt.Print("\nWould you like to add any additional environment variables? (y/n): ")
+	response, _ := reader.ReadString('\n')
+	response = strings.TrimSpace(strings.ToLower(response))
+
+	if response == "y" || response == "yes" {
+		fmt.Println("Enter environment variables in the format: VARIABLE_NAME=value")
+		fmt.Println("Enter an empty line to finish")
+
+		for {
+			fmt.Print("> ")
+			line, _ := reader.ReadString('\n')
+			line = strings.TrimSpace(line)
+
+			if line == "" {
+				break
+			}
+
+			// 解析 VARIABLE_NAME=value 格式
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) == 2 {
+				varName := strings.TrimSpace(parts[0])
+				varValue := strings.TrimSpace(parts[1])
+				if varName != "" {
+					newConfig.Env[varName] = varValue
+				}
+			} else {
+				ui.ShowWarning("Invalid format. Use VARIABLE_NAME=value")
+			}
+		}
+	}
+
+	// 询问是否跳过权限检查
+	fmt.Print("Use --dangerously-skip-permissions? (y/n) [default: n]: ")
+	skipResp, _ := reader.ReadString('\n')
+	skipResp = strings.TrimSpace(strings.ToLower(skipResp))
+	if skipResp == "y" {
+		skipPermissions := true
+		newConfig.SkipPermissions = &skipPermissions
 	}
 
 	// 测试API连接
 	ui.ShowLoading("Testing API connection")
-	testConfig := config.APIConfig{
-		Name:               name,
-		AnthropicBaseURL:   baseURL,
-		AnthropicAuthToken: token,
-	}
-
-	if config.TestAPIConfig(testConfig) {
+	if config.TestAPIConfig(newConfig) {
 		ui.ShowSuccess("API connection successful!")
-		testConfig.Status = "active"
+		newConfig.Status = "active"
 	} else {
 		ui.ShowWarning("API connection failed. Configuration added but marked as inactive")
-		testConfig.Status = "inactive"
+		newConfig.Status = "inactive"
 	}
 
 	// 添加新配置
-	configData.Configs = append(configData.Configs, testConfig)
+	configData.Configs = append(configData.Configs, newConfig)
 
 	// 如果这是第一个配置，设置为默认
 	if len(configData.Configs) == 1 {
@@ -266,10 +385,20 @@ func RunAdd() {
 
 	ui.ShowSuccess("Configuration '%s' added successfully!", name)
 	ui.ShowInfo("API: %s", baseURL)
-	if testConfig.Status == "active" {
+	ui.ShowInfo("Environment variables: %d", len(newConfig.Env))
+
+	if newConfig.Status == "active" {
 		ui.ShowInfo("Status: Active")
 	} else {
 		ui.ShowWarning("Status: Inactive (API test failed)")
+	}
+
+	if newConfig.SkipPermissions != nil {
+		if *newConfig.SkipPermissions {
+			ui.ShowInfo("Permissions: Skip --dangerously-skip-permissions")
+		} else {
+			ui.ShowInfo("Permissions: Use default (no --dangerously-skip-permissions)")
+		}
 	}
 }
 
@@ -367,12 +496,28 @@ func RunClaudeWithConfig(args []string) {
 	}
 
 	// Set environment variables
-	os.Setenv("ANTHROPIC_BASE_URL", selectedConfig.AnthropicBaseURL)
-	os.Setenv("ANTHROPIC_AUTH_TOKEN", selectedConfig.AnthropicAuthToken)
+	config.SetEnvironmentVars(&selectedConfig)
 
-	ui.ShowInfo("Using configuration: %s (%s)", selectedConfig.Name, selectedConfig.AnthropicBaseURL)
-	// Run claude with dangerous permissions
-	cmd := exec.Command("claude", append([]string{"--dangerously-skip-permissions"}, args...)...)
+	// Get API URL for display
+	apiURL := selectedConfig.Env["ANTHROPIC_BASE_URL"]
+	if apiURL == "" {
+		apiURL = "unknown"
+	}
+
+	ui.ShowInfo("Using configuration: %s (%s)", selectedConfig.Name, apiURL)
+
+	// Build claude command with or without --dangerously-skip-permissions
+	var claudeArgs []string
+	if config.ShouldSkipPermissionsWithConfig(&selectedConfig, cfg) {
+		claudeArgs = []string{"--dangerously-skip-permissions"}
+	}
+
+	// Add user arguments
+	if len(args) > 0 {
+		claudeArgs = append(claudeArgs, args...)
+	}
+
+	cmd := exec.Command("claude", claudeArgs...)
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -468,10 +613,11 @@ func RunInit() {
 			// Create and test configuration
 			ui.ShowLoading("Testing API connection...")
 			testConfig := config.APIConfig{
-				Name:               name,
-				AnthropicBaseURL:   baseURL,
-				AnthropicAuthToken: authToken,
+				Name: name,
+				Env:  make(map[string]string),
 			}
+			testConfig.Env["ANTHROPIC_BASE_URL"] = baseURL
+			testConfig.Env["ANTHROPIC_AUTH_TOKEN"] = authToken
 
 			var cfg config.Config
 			cfg.Configs = []config.APIConfig{testConfig}
@@ -544,8 +690,39 @@ func RunInit() {
 						statusText = "inactive"
 					}
 
-					fmt.Printf("  %d. %s %s%s - %s [%s]\n",
-						i+1, statusIcon, c.Name, isDefault, c.AnthropicBaseURL, statusText)
+					// Check permissions setting
+					permissionsText := "default"
+					if config.ShouldSkipPermissions(&c) {
+						permissionsText = "skip permissions"
+					} else if c.SkipPermissions != nil && !*c.SkipPermissions {
+						permissionsText = "use permissions"
+					}
+
+					// Get API endpoint
+					apiURL := "unknown"
+					if baseURL, exists := c.Env["ANTHROPIC_BASE_URL"]; exists {
+						apiURL = baseURL
+					}
+
+					fmt.Printf("  %d. %s %s%s - %s [%s, %s]\n",
+						i+1, statusIcon, c.Name, isDefault, apiURL, statusText, permissionsText)
+
+					// Show environment variables (truncated for display)
+					if len(c.Env) > 0 {
+						fmt.Printf("      Environment Variables (%d):\n", len(c.Env))
+						for envKey, envValue := range c.Env {
+							// Truncate sensitive values
+							displayValue := envValue
+							if strings.Contains(strings.ToUpper(envKey), "TOKEN") ||
+								strings.Contains(strings.ToUpper(envKey), "KEY") ||
+								strings.Contains(strings.ToUpper(envKey), "SECRET") {
+								if len(envValue) > 8 {
+									displayValue = envValue[:4] + "..." + envValue[len(envValue)-4:]
+								}
+							}
+							fmt.Printf("        %s: %s\n", envKey, displayValue)
+						}
+					}
 				}
 
 				// 4. Test default configuration
@@ -661,14 +838,43 @@ func RunStart(args []string) {
 			os.Exit(1)
 		}
 	} else {
-		// 没有参数，使用上次目录
-		lastDir, err := config.GetLastWorkDir()
-		if err != nil {
-			ui.ShowError("Failed to get last working directory", err)
-			os.Exit(1)
+		// 没有参数，根据配置决定使用哪个目录
+		var err error
+		behavior := config.GetDefaultBehavior()
+
+		switch behavior {
+		case "current":
+			targetDir, err = os.Getwd()
+			if err != nil {
+				ui.ShowError("Failed to get current directory", err)
+				os.Exit(1)
+			}
+			ui.ShowInfo("Using current directory: %s", targetDir)
+		case "last":
+			lastDir, err := config.GetLastWorkDir()
+			if err != nil {
+				ui.ShowError("Failed to get last working directory", err)
+				os.Exit(1)
+			}
+			targetDir = lastDir
+			ui.ShowInfo("Using last directory: %s", targetDir)
+		case "home":
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				ui.ShowError("Failed to get home directory", err)
+				os.Exit(1)
+			}
+			targetDir = homeDir
+			ui.ShowInfo("Using home directory: %s", targetDir)
+		default:
+			// 默认使用当前目录
+			targetDir, err = os.Getwd()
+			if err != nil {
+				ui.ShowError("Failed to get current directory", err)
+				os.Exit(1)
+			}
+			ui.ShowInfo("Using current directory: %s", targetDir)
 		}
-		targetDir = lastDir
-		ui.ShowInfo("Using last directory: %s", targetDir)
 	}
 
 	// 保存当前目录为上次目录
@@ -778,17 +984,418 @@ func runClaudeInDirectory(dir string) {
 	}
 
 	// Set environment variables
-	os.Setenv("ANTHROPIC_BASE_URL", selectedConfig.AnthropicBaseURL)
-	os.Setenv("ANTHROPIC_AUTH_TOKEN", selectedConfig.AnthropicAuthToken)
+	config.SetEnvironmentVarsWithConfig(&selectedConfig, cfg)
 
 	ui.ShowInfo("Using configuration: %s", selectedConfig.Name)
 	ui.ShowInfo("Working directory: %s", dir)
 
-	// Run claude with dangerous permissions in specified directory
-	cmd := exec.Command("claude", "--dangerously-skip-permissions")
+	// Build claude command with or without --dangerously-skip-permissions
+	var claudeArgs []string
+	if config.ShouldSkipPermissionsWithConfig(&selectedConfig, cfg) {
+		claudeArgs = []string{"--dangerously-skip-permissions"}
+	}
+
+	cmd := exec.Command("claude", claudeArgs...)
 	cmd.Dir = dir // 设置工作目录，而不是作为参数传递
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
 	cmd.Run()
+}
+
+// RunTest 测试 API 配置
+func RunTest(args []string) {
+	ui.ShowHeader("API Configuration Test")
+	fmt.Println()
+
+	// 加载配置
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	if len(cfg.Configs) == 0 {
+		ui.ShowError("No configurations found", nil)
+		ui.ShowInfo("Run 'codes add' to add a configuration first")
+		return
+	}
+
+	// 检查是否指定了特定配置
+	if len(args) > 0 && args[0] != "" {
+		// 测试特定配置
+		configName := args[0]
+		var targetConfig *config.APIConfig
+		for i := range cfg.Configs {
+			if cfg.Configs[i].Name == configName {
+				targetConfig = &cfg.Configs[i]
+				break
+			}
+		}
+
+		if targetConfig == nil {
+			ui.ShowError("Configuration '%s' not found", fmt.Errorf("config not found"))
+			return
+		}
+
+		ui.ShowInfo("Testing configuration: %s", configName)
+		testSingleConfiguration(targetConfig)
+	} else {
+		// 测试所有配置
+		ui.ShowInfo("Testing all %d configurations...", len(cfg.Configs))
+		testAllConfigurations(cfg.Configs)
+	}
+}
+
+// testSingleConfiguration 测试单个配置
+func testSingleConfiguration(apiConfig *config.APIConfig) {
+	fmt.Println()
+
+	// 获取模型信息用于显示
+	envVars := config.GetEnvironmentVars(apiConfig)
+	model := envVars["ANTHROPIC_MODEL"]
+	if model == "" {
+		model = envVars["ANTHROPIC_DEFAULT_HAIKU_MODEL"]
+		if model == "" {
+			model = "claude-3-haiku-20240307"
+		}
+	}
+
+	ui.ShowInfo("Model: %s", model)
+	ui.ShowInfo("API: %s", envVars["ANTHROPIC_BASE_URL"])
+
+	// 测试 API 连接
+	ui.ShowLoading("Testing API connection...")
+	if config.TestAPIConfig(*apiConfig) {
+		ui.ShowSuccess("✓ API connection successful!")
+		apiConfig.Status = "active"
+	} else {
+		ui.ShowError("✗ API connection failed", nil)
+		apiConfig.Status = "inactive"
+		ui.ShowWarning("Check your configuration and network connectivity")
+	}
+
+	// 保存更新后的状态
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config for update", err)
+		return
+	}
+
+	// 更新配置状态
+	for i := range cfg.Configs {
+		if cfg.Configs[i].Name == apiConfig.Name {
+			cfg.Configs[i].Status = apiConfig.Status
+			break
+		}
+	}
+
+	if err := config.SaveConfig(cfg); err != nil {
+		ui.ShowError("Failed to save config status", err)
+	}
+}
+
+// testAllConfigurations 测试所有配置
+func testAllConfigurations(configs []config.APIConfig) {
+	results := make(map[string]bool)
+	statuses := make(map[string]string)
+	successCount := 0
+
+	fmt.Println()
+	for i := range configs {
+		fmt.Printf("Testing %s...", configs[i].Name)
+
+		// 获取模型信息
+		envVars := config.GetEnvironmentVars(&configs[i])
+		model := envVars["ANTHROPIC_MODEL"]
+		if model == "" {
+			model = envVars["ANTHROPIC_DEFAULT_HAIKU_MODEL"]
+			if model == "" {
+				model = "claude-3-haiku-20240307"
+			}
+		}
+
+		// 测试 API 连接
+		success := config.TestAPIConfig(configs[i])
+		results[configs[i].Name] = success
+
+		if success {
+			fmt.Printf(" ✓ (Model: %s)\n", model)
+			statuses[configs[i].Name] = "active"
+			successCount++
+		} else {
+			fmt.Printf(" ✗ (Model: %s)\n", model)
+			statuses[configs[i].Name] = "inactive"
+		}
+	}
+
+	// 显示总结
+	fmt.Println()
+	ui.ShowHeader("Test Results")
+	fmt.Printf("Successfully tested: %d/%d\n", successCount, len(configs))
+
+	if successCount == len(configs) {
+		ui.ShowSuccess("All configurations are working!")
+	} else if successCount == 0 {
+		ui.ShowError("No configurations are working", nil)
+		ui.ShowInfo("Check your configurations and network connectivity")
+	} else {
+		ui.ShowWarning("Some configurations failed")
+		ui.ShowInfo("Use 'codes test <config-name>' to test individual configurations")
+	}
+
+	// 保存更新后的状态
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config for update", err)
+		return
+	}
+
+	// 更新所有配置状态
+	updated := false
+	for i := range cfg.Configs {
+		if newStatus, ok := statuses[cfg.Configs[i].Name]; ok {
+			if cfg.Configs[i].Status != newStatus {
+				cfg.Configs[i].Status = newStatus
+				updated = true
+			}
+		}
+	}
+
+	if updated {
+		if err := config.SaveConfig(cfg); err != nil {
+			ui.ShowError("Failed to save config status", err)
+		}
+	}
+}
+
+// RunConfigSet 设置配置值
+func RunConfigSet(key, value string) {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	switch key {
+	case "defaultBehavior":
+		// 验证值
+		if value != "current" && value != "last" && value != "home" {
+			ui.ShowError("Invalid value for defaultBehavior. Must be 'current', 'last', or 'home'", nil)
+			return
+		}
+		cfg.DefaultBehavior = value
+		ui.ShowSuccess("Default behavior set to: %s", value)
+	default:
+		ui.ShowError("Unknown configuration key: %s", nil)
+		fmt.Printf("Available keys: defaultBehavior\n")
+		return
+	}
+
+	if err := config.SaveConfig(cfg); err != nil {
+		ui.ShowError("Error saving config", err)
+		return
+	}
+}
+
+// RunConfigGet 获取配置值
+func RunConfigGet(args []string) {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	if len(args) > 0 {
+		// 显示特定配置
+		key := args[0]
+		switch key {
+		case "defaultBehavior":
+			fmt.Printf("%s: %s\n", key, cfg.DefaultBehavior)
+		default:
+			ui.ShowError("Unknown configuration key: %s", nil)
+			fmt.Printf("Available keys: defaultBehavior\n")
+			return
+		}
+	} else {
+		// 显示所有配置
+		fmt.Println("Current configuration:")
+		fmt.Printf("  defaultBehavior: %s\n", cfg.DefaultBehavior)
+		fmt.Printf("  skipPermissions: %v\n", cfg.SkipPermissions)
+		fmt.Printf("  lastWorkDir: %s\n", cfg.LastWorkDir)
+		fmt.Printf("  default: %s\n", cfg.Default)
+		fmt.Printf("  projects: %d configured\n", len(cfg.Projects))
+	}
+}
+
+// RunDefaultBehaviorSet 设置默认行为
+func RunDefaultBehaviorSet(behavior string) {
+	// 验证值
+	if behavior != "current" && behavior != "last" && behavior != "home" {
+		ui.ShowError("Invalid behavior. Must be 'current', 'last', or 'home'", nil)
+		fmt.Println()
+		ui.ShowInfo("Available behaviors:")
+		ui.ShowInfo("  current - Use current working directory")
+		ui.ShowInfo("  last    - Use last used directory")
+		ui.ShowInfo("  home    - Use home directory")
+		return
+	}
+
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	oldBehavior := cfg.DefaultBehavior
+	if oldBehavior == "" {
+		oldBehavior = "current"
+	}
+
+	cfg.DefaultBehavior = behavior
+
+	if err := config.SaveConfig(cfg); err != nil {
+		ui.ShowError("Error saving config", err)
+		return
+	}
+
+	ui.ShowSuccess("Default behavior set to: %s", behavior)
+	fmt.Println()
+	ui.ShowInfo("This will affect where Claude starts when you run 'codes' without arguments.")
+	ui.ShowInfo("Previous behavior: %s", oldBehavior)
+	ui.ShowInfo("New behavior: %s", behavior)
+
+	// 显示帮助信息
+	fmt.Println()
+	ui.ShowInfo("Examples:")
+	ui.ShowInfo("  codes                    - Start Claude with %s directory", behavior)
+	ui.ShowInfo("  codes start project-name - Start Claude in specific project")
+	ui.ShowInfo("  codes start /path/to/dir - Start Claude in specific directory")
+}
+
+// RunDefaultBehaviorGet 获取当前默认行为
+func RunDefaultBehaviorGet() {
+	currentBehavior := config.GetDefaultBehavior()
+
+	fmt.Println("Current default behavior:")
+	ui.ShowInfo("  %s", currentBehavior)
+
+	fmt.Println()
+	ui.ShowInfo("Description:")
+	switch currentBehavior {
+	case "current":
+		ui.ShowInfo("  Claude will start in the current working directory")
+	case "last":
+		ui.ShowInfo("  Claude will start in the last used directory")
+	case "home":
+		ui.ShowInfo("  Claude will start in your home directory")
+	}
+
+	fmt.Println()
+	ui.ShowInfo("To change this setting:")
+	ui.ShowInfo("  codes defaultbehavior set <current|last|home>")
+}
+
+// RunDefaultBehaviorReset 重置默认行为
+func RunDefaultBehaviorReset() {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	oldBehavior := cfg.DefaultBehavior
+	if oldBehavior == "" {
+		oldBehavior = "current"
+	}
+
+	cfg.DefaultBehavior = ""
+
+	if err := config.SaveConfig(cfg); err != nil {
+		ui.ShowError("Error saving config", err)
+		return
+	}
+
+	ui.ShowSuccess("Default behavior reset to: current")
+	fmt.Println()
+	ui.ShowInfo("Previous behavior: %s", oldBehavior)
+	ui.ShowInfo("New behavior: current (default)")
+	ui.ShowInfo("Claude will now start in the current working directory by default.")
+}
+
+// RunSkipPermissionsSet 设置全局 skipPermissions
+func RunSkipPermissionsSet(skip bool) {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	oldValue := cfg.SkipPermissions
+	cfg.SkipPermissions = skip
+
+	if err := config.SaveConfig(cfg); err != nil {
+		ui.ShowError("Error saving config", err)
+		return
+	}
+
+	status := "enabled"
+	if !skip {
+		status = "disabled"
+	}
+	ui.ShowSuccess("Global skipPermissions %s", status)
+
+	fmt.Println()
+	ui.ShowInfo("Previous setting: %v", oldValue)
+	ui.ShowInfo("New setting: %v", skip)
+
+	if skip {
+		ui.ShowInfo("Claude will now run with --dangerously-skip-permissions for all configurations that don't have their own setting.")
+	} else {
+		ui.ShowInfo("Claude will run without --dangerously-skip-permissions unless a specific configuration has it enabled.")
+	}
+}
+
+// RunSkipPermissionsGet 获取全局 skipPermissions 设置
+func RunSkipPermissionsGet() {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	fmt.Printf("Global skipPermissions: %v\n", cfg.SkipPermissions)
+
+	if cfg.SkipPermissions {
+		ui.ShowInfo("Claude will run with --dangerously-skip-permissions for all configurations that don't have their own setting.")
+	} else {
+		ui.ShowInfo("Claude will run without --dangerously-skip-permissions unless a specific configuration has it enabled.")
+	}
+
+	fmt.Println()
+	ui.ShowInfo("Individual configuration settings override this global setting.")
+	ui.ShowInfo("Use 'codes config get' to see all configurations and their skipPermissions settings.")
+}
+
+// RunSkipPermissionsReset 重置全局 skipPermissions
+func RunSkipPermissionsReset() {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	oldValue := cfg.SkipPermissions
+	cfg.SkipPermissions = false // 重置为 false
+
+	if err := config.SaveConfig(cfg); err != nil {
+		ui.ShowError("Error saving config", err)
+		return
+	}
+
+	ui.ShowSuccess("Global skipPermissions reset to: false")
+	fmt.Println()
+	ui.ShowInfo("Previous setting: %v", oldValue)
+	ui.ShowInfo("New setting: false (default)")
+	ui.ShowInfo("Claude will now run without --dangerously-skip-permissions unless a specific configuration has it enabled.")
 }

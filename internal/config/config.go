@@ -2,6 +2,8 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -10,17 +12,19 @@ import (
 )
 
 type Config struct {
-	Configs     []APIConfig       `json:"configs"`
-	Default     string            `json:"default"`
-	Projects    map[string]string `json:"projects,omitempty"`    // 项目别名 -> 目录路径
-	LastWorkDir string            `json:"lastWorkDir,omitempty"` // 上次工作目录
+	Configs         []APIConfig       `json:"configs"`
+	Default         string            `json:"default"`
+	SkipPermissions bool              `json:"skipPermissions,omitempty"` // 全局是否跳过权限检查
+	Projects        map[string]string `json:"projects,omitempty"`        // 项目别名 -> 目录路径
+	LastWorkDir     string            `json:"lastWorkDir,omitempty"`     // 上次工作目录
+	DefaultBehavior string            `json:"defaultBehavior,omitempty"` // 默认启动行为: "current", "last", "home"
 }
 
 type APIConfig struct {
-	Name               string `json:"name"`
-	AnthropicBaseURL   string `json:"ANTHROPIC_BASE_URL"`
-	AnthropicAuthToken string `json:"ANTHROPIC_AUTH_TOKEN"`
-	Status             string `json:"status,omitempty"` // "active", "inactive", "unknown"
+	Name            string            `json:"name"`
+	Env             map[string]string `json:"env,omitempty"`             // 环境变量映射
+	SkipPermissions *bool             `json:"skipPermissions,omitempty"` // 单独配置是否跳过权限检查，nil 表示使用全局设置
+	Status          string            `json:"status,omitempty"`          // "active", "inactive", "unknown"
 }
 
 var ConfigPath string
@@ -69,16 +73,33 @@ func TestAPIConfig(config APIConfig) bool {
 		Timeout: 10 * time.Second,
 	}
 
+	// 获取环境变量
+	envVars := GetEnvironmentVars(&config)
+
 	// Claude API的messages端点
-	apiURL := config.AnthropicBaseURL
+	apiURL := envVars["ANTHROPIC_BASE_URL"]
+	if apiURL == "" {
+		apiURL = "https://api.anthropic.com" // 默认值
+	}
 	if apiURL[len(apiURL)-1] != '/' {
 		apiURL += "/"
 	}
 	apiURL += "v1/messages"
 
+	// 获取模型名称
+	model := envVars["ANTHROPIC_MODEL"]
+	if model == "" {
+		// 尝试获取默认模型
+		model = envVars["ANTHROPIC_DEFAULT_HAIKU_MODEL"]
+		if model == "" {
+			// 最后回退到默认模型
+			model = "claude-3-haiku-20240307"
+		}
+	}
+
 	// 构建测试请求体
-	testBody := `{
-		"model": "claude-3-haiku-20240307",
+	testBody := fmt.Sprintf(`{
+		"model": "%s",
 		"max_tokens": 10,
 		"messages": [
 			{
@@ -86,7 +107,7 @@ func TestAPIConfig(config APIConfig) bool {
 				"content": "Hello"
 			}
 		]
-	}`
+	}`, model)
 
 	req, err := http.NewRequest("POST", apiURL, strings.NewReader(testBody))
 	if err != nil {
@@ -94,7 +115,15 @@ func TestAPIConfig(config APIConfig) bool {
 	}
 
 	// 设置Claude API头
-	req.Header.Set("x-api-key", config.AnthropicAuthToken)
+	authToken := envVars["ANTHROPIC_AUTH_TOKEN"]
+	if authToken == "" {
+		authToken = envVars["ANTHROPIC_API_KEY"] // 备选方案
+	}
+
+	if authToken != "" {
+		req.Header.Set("x-api-key", authToken)
+	}
+
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("anthropic-version", "2023-06-01")
 	req.Header.Set("anthropic-dangerous-disable-guardrails", "true") // 测试时禁用护栏
@@ -130,8 +159,14 @@ func testBasicConnectivity(config APIConfig) bool {
 		Timeout: 3 * time.Second,
 	}
 
+	// 获取环境变量
+	envVars := GetEnvironmentVars(&config)
+
 	// 尝试连接基础URL
-	testURL := config.AnthropicBaseURL
+	testURL := envVars["ANTHROPIC_BASE_URL"]
+	if testURL == "" {
+		testURL = "https://api.anthropic.com" // 默认值
+	}
 	if testURL[len(testURL)-1] != '/' {
 		testURL += "/"
 	}
@@ -232,4 +267,97 @@ func ListProjects() (map[string]string, error) {
 	}
 
 	return cfg.Projects, nil
+}
+
+// ShouldSkipPermissions 判断是否应该跳过权限检查
+func ShouldSkipPermissions(apiConfig *APIConfig) bool {
+	return ShouldSkipPermissionsWithConfig(apiConfig, nil)
+}
+
+// ShouldSkipPermissionsWithConfig 使用已加载的配置判断是否应该跳过权限检查
+func ShouldSkipPermissionsWithConfig(apiConfig *APIConfig, cfg *Config) bool {
+	// 如果没有提供配置，加载配置
+	var loadedConfig *Config
+	if cfg == nil {
+		var err error
+		loadedConfig, err = LoadConfig()
+		if err != nil {
+			return false
+		}
+		cfg = loadedConfig
+	}
+
+	// 如果 API 配置中有单独的设置，使用单独设置
+	if apiConfig.SkipPermissions != nil {
+		return *apiConfig.SkipPermissions
+	}
+
+	// 否则使用全局设置
+	return cfg.SkipPermissions
+}
+
+// GetEnvironmentVars 获取配置的所有环境变量
+func GetEnvironmentVars(apiConfig *APIConfig) map[string]string {
+	envVars := make(map[string]string)
+
+	// 添加所有配置的环境变量
+	for key, value := range apiConfig.Env {
+		envVars[key] = value
+	}
+
+	return envVars
+}
+
+// SetEnvironmentVars 设置环境变量到当前进程
+func SetEnvironmentVars(apiConfig *APIConfig) {
+	SetEnvironmentVarsWithConfig(apiConfig, nil)
+}
+
+// SetEnvironmentVarsWithConfig 使用已加载的配置设置环境变量
+func SetEnvironmentVarsWithConfig(apiConfig *APIConfig, cfg *Config) {
+	envVars := GetEnvironmentVars(apiConfig)
+	for key, value := range envVars {
+		if err := os.Setenv(key, value); err != nil {
+			log.Printf("Warning: Failed to set environment variable %s: %v", key, err)
+		}
+	}
+}
+
+// GetDefaultEnvironmentVars 获取默认的环境变量提示
+func GetDefaultEnvironmentVars() map[string]string {
+	return map[string]string{
+		"ANTHROPIC_BASE_URL":                "API endpoint URL (e.g., https://api.anthropic.com)",
+		"ANTHROPIC_AUTH_TOKEN":              "Authentication token (e.g., sk-ant-...)",
+		"ANTHROPIC_API_KEY":                 "API key for Claude SDK (interactive use)",
+		"CLAUDE_CODE_API_KEY_HELPER_TTL_MS": "API key helper TTL in milliseconds",
+		"HTTP_PROXY":                        "HTTP proxy server",
+		"HTTPS_PROXY":                       "HTTPS proxy server",
+		"NO_PROXY":                          "Domains and IPs to bypass proxy",
+		"ANTHROPIC_MODEL":                   "Model name to use",
+		"ANTHROPIC_DEFAULT_HAIKU_MODEL":     "Default Haiku model",
+		"ANTHROPIC_DEFAULT_SONNET_MODEL":    "Default Sonnet model",
+		"ANTHROPIC_DEFAULT_OPUS_MODEL":      "Default Opus model",
+		"MAX_THINKING_TOKENS":               "Maximum thinking tokens for extended thinking",
+	}
+}
+
+// GetDefaultBehavior 获取默认启动行为
+func GetDefaultBehavior() string {
+	cfg, err := LoadConfig()
+	if err != nil {
+		// 默认使用当前目录
+		return "current"
+	}
+
+	if cfg.DefaultBehavior == "" {
+		return "current"
+	}
+
+	// 验证值是否有效
+	if cfg.DefaultBehavior == "current" || cfg.DefaultBehavior == "last" || cfg.DefaultBehavior == "home" {
+		return cfg.DefaultBehavior
+	}
+
+	// 无效值，回退到默认
+	return "current"
 }
