@@ -35,4 +35,4 @@ jobs:
       run: |
         ./codes add --help
         ./codes select --help
-        ./codes install --help
+        ./codes completion --help
