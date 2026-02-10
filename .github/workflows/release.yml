@@ -14,21 +14,27 @@ jobs:
           - platform: ubuntu-latest
             goos: linux
             goarch: amd64
+            can_test: true
           - platform: ubuntu-latest
             goos: linux
             goarch: arm64
+            can_test: false
           - platform: windows-latest
             goos: windows
             goarch: amd64
+            can_test: true
           - platform: windows-latest
             goos: windows
             goarch: arm64
+            can_test: false
           - platform: macos-latest
             goos: darwin
             goarch: amd64
+            can_test: false
           - platform: macos-latest
             goos: darwin
             goarch: arm64
+            can_test: true
 
     runs-on: ${{ matrix.platform }}
 
@@ -47,6 +53,10 @@ jobs:
 
     - name: Build codes
       shell: bash
+      env:
+        GOOS: ${{ matrix.goos }}
+        GOARCH: ${{ matrix.goarch }}
+        CGO_ENABLED: '0'
       run: |
         if [ "${{ matrix.goos }}" = "windows" ]; then
           go build -o codes.exe ./cmd/codes
@@ -55,6 +65,7 @@ jobs:
         fi
 
     - name: Test
+      if: matrix.can_test
       shell: bash
       run: |
         if [ "${{ matrix.goos }}" = "windows" ]; then
