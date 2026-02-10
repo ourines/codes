@@ -18,8 +18,16 @@ A powerful CLI tool for managing multiple Claude Code configurations with ease. 
 
 ## Quick Install
 
+**Linux / macOS:**
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/ourines/codes/main/install.sh | sh
+```
+
+**Windows (PowerShell):**
+
+```powershell
+irm https://raw.githubusercontent.com/ourines/codes/main/install.ps1 | iex
 ```
 
 ## Installation
@@ -124,7 +132,7 @@ codes init
 ```
 
 **Example output:**
-```
+```text
 ✓ Binary installed to /usr/local/bin/codes
 ✓ Shell completion configured for zsh
 ✓ Claude CLI is installed

@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -480,7 +481,11 @@ func installBinary() (string, bool) {
 
 	switch runtime.GOOS {
 	case "windows":
-		homeDir, _ := os.UserHomeDir()
+		homeDir, err := os.UserHomeDir()
+		if err != nil {
+			ui.ShowError("Failed to get home directory", err)
+			return "", false
+		}
 		targetDir = filepath.Join(homeDir, "go", "bin")
 		installPath = filepath.Join(targetDir, "codes.exe")
 	default:
@@ -488,7 +493,11 @@ func installBinary() (string, bool) {
 			targetDir = "/usr/local/bin"
 			installPath = filepath.Join(targetDir, "codes")
 		} else {
-			homeDir, _ := os.UserHomeDir()
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				ui.ShowError("Failed to get home directory", err)
+				return "", false
+			}
 			targetDir = filepath.Join(homeDir, "bin")
 			installPath = filepath.Join(targetDir, "codes")
 		}
@@ -509,14 +518,22 @@ func installBinary() (string, bool) {
 		return "", false
 	}
 
-	sourceData, err := os.ReadFile(executablePath)
+	src, err := os.Open(executablePath)
 	if err != nil {
 		ui.ShowError("Failed to read executable", err)
 		return "", false
 	}
+	defer src.Close()
 
-	if err := os.WriteFile(installPath, sourceData, 0755); err != nil {
+	dst, err := os.OpenFile(installPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	if err != nil {
 		ui.ShowError("Failed to write to target location", err)
+		return "", false
+	}
+	defer dst.Close()
+
+	if _, err := io.Copy(dst, src); err != nil {
+		ui.ShowError("Failed to copy executable", err)
 		return "", false
 	}
 
@@ -530,15 +547,19 @@ func installBinary() (string, bool) {
 }
 
 // installShellCompletion detects the user's shell and installs completion.
-func installShellCompletion() {
+func installShellCompletion() bool {
 	shellPath := os.Getenv("SHELL")
 	if shellPath == "" {
 		ui.ShowWarning("⚠ Could not detect shell, skipping completion setup")
-		return
+		return false
 	}
 
 	shell := filepath.Base(shellPath)
-	homeDir, _ := os.UserHomeDir()
+	homeDir, err := os.UserHomeDir()
+	if err != nil {
+		ui.ShowError("Failed to get home directory", err)
+		return false
+	}
 
 	switch shell {
 	case "zsh":
@@ -554,24 +575,25 @@ func installShellCompletion() {
 		completionDir := filepath.Join(homeDir, ".config", "fish", "completions")
 		if err := os.MkdirAll(completionDir, 0755); err != nil {
 			ui.ShowError("Failed to create fish completions directory", err)
-			return
+			return false
 		}
 		completionFile := filepath.Join(completionDir, "codes.fish")
 		if _, err := os.Stat(completionFile); err == nil {
 			ui.ShowSuccess("✓ Fish completion already installed at %s", completionFile)
-			return
+			return true
 		}
-		// Write a loader script that generates completions on demand
 		content := "# codes CLI completion\ncodes completion fish | source\n"
 		if err := os.WriteFile(completionFile, []byte(content), 0644); err != nil {
 			ui.ShowError("Failed to write fish completion", err)
-			return
+			return false
 		}
 		ui.ShowSuccess("✓ Fish completion installed at %s", completionFile)
 	default:
 		ui.ShowWarning("⚠ Unsupported shell: %s, skipping completion setup", shell)
 		ui.ShowInfo("  You can manually run: codes completion --help")
+		return false
 	}
+	return true
 }
 
 // appendCompletionLine appends a completion source line to a shell config file if not already present.
@@ -606,12 +628,16 @@ func RunInit() {
 
 	// 1. Install binary to system PATH
 	ui.ShowInfo("Installing codes CLI...")
-	installBinary()
+	if _, ok := installBinary(); !ok {
+		allGood = false
+	}
 	fmt.Println()
 
 	// 2. Install shell completion
 	ui.ShowInfo("Setting up shell completion...")
-	installShellCompletion()
+	if !installShellCompletion() {
+		allGood = false
+	}
 	fmt.Println()
 
 	// 3. Check if Claude CLI is installed

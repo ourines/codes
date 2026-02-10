@@ -337,11 +337,14 @@ func completeConfigNames(cmd *cobra.Command, args []string, toComplete string) (
 func completeProjectNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	projects, err := config.ListProjects()
 	if err != nil {
-		return nil, cobra.ShellCompDirectiveDefault
+		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	var names []string
 	for name := range projects {
 		names = append(names, name)
+	}
+	if cmd.Name() == "remove" {
+		return names, cobra.ShellCompDirectiveNoFileComp
 	}
 	return names, cobra.ShellCompDirectiveDefault
 }
