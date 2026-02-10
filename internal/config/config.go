@@ -1,13 +1,12 @@
 package config
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
-	"strings"
 	"time"
 )
 
@@ -25,6 +24,43 @@ type APIConfig struct {
 	Env             map[string]string `json:"env,omitempty"`             // 环境变量映射
 	SkipPermissions *bool             `json:"skipPermissions,omitempty"` // 单独配置是否跳过权限检查，nil 表示使用全局设置
 	Status          string            `json:"status,omitempty"`          // "active", "inactive", "unknown"
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for APIConfig to support
+// backward compatibility with the old flat config format where ANTHROPIC_BASE_URL
+// and ANTHROPIC_AUTH_TOKEN were top-level fields instead of nested under "env".
+func (a *APIConfig) UnmarshalJSON(data []byte) error {
+	// Use an alias to avoid infinite recursion
+	type Alias APIConfig
+	aux := &struct {
+		*Alias
+		// Legacy flat fields from old config format
+		AnthropicBaseURL   string `json:"ANTHROPIC_BASE_URL"`
+		AnthropicAuthToken string `json:"ANTHROPIC_AUTH_TOKEN"`
+	}{
+		Alias: (*Alias)(a),
+	}
+
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+
+	// Migrate legacy flat fields into the env map
+	if a.Env == nil {
+		a.Env = make(map[string]string)
+	}
+	if aux.AnthropicBaseURL != "" {
+		if _, exists := a.Env["ANTHROPIC_BASE_URL"]; !exists {
+			a.Env["ANTHROPIC_BASE_URL"] = aux.AnthropicBaseURL
+		}
+	}
+	if aux.AnthropicAuthToken != "" {
+		if _, exists := a.Env["ANTHROPIC_AUTH_TOKEN"]; !exists {
+			a.Env["ANTHROPIC_AUTH_TOKEN"] = aux.AnthropicAuthToken
+		}
+	}
+
+	return nil
 }
 
 var ConfigPath string
@@ -98,18 +134,27 @@ func TestAPIConfig(config APIConfig) bool {
 	}
 
 	// 构建测试请求体
-	testBody := fmt.Sprintf(`{
-		"model": "%s",
-		"max_tokens": 10,
-		"messages": [
-			{
-				"role": "user",
-				"content": "Hello"
-			}
-		]
-	}`, model)
+	type testMessage struct {
+		Role    string `json:"role"`
+		Content string `json:"content"`
+	}
+	type testRequest struct {
+		Model     string        `json:"model"`
+		MaxTokens int           `json:"max_tokens"`
+		Messages  []testMessage `json:"messages"`
+	}
 
-	req, err := http.NewRequest("POST", apiURL, strings.NewReader(testBody))
+	reqBody := testRequest{
+		Model:     model,
+		MaxTokens: 10,
+		Messages:  []testMessage{{Role: "user", Content: "Hello"}},
+	}
+	bodyBytes, err := json.Marshal(reqBody)
+	if err != nil {
+		return false
+	}
+
+	req, err := http.NewRequest("POST", apiURL, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return false
 	}
@@ -310,15 +355,15 @@ func GetEnvironmentVars(apiConfig *APIConfig) map[string]string {
 
 // SetEnvironmentVars 设置环境变量到当前进程
 func SetEnvironmentVars(apiConfig *APIConfig) {
-	SetEnvironmentVarsWithConfig(apiConfig, nil)
+	SetEnvironmentVarsWithConfig(apiConfig)
 }
 
 // SetEnvironmentVarsWithConfig 使用已加载的配置设置环境变量
-func SetEnvironmentVarsWithConfig(apiConfig *APIConfig, cfg *Config) {
+func SetEnvironmentVarsWithConfig(apiConfig *APIConfig) {
 	envVars := GetEnvironmentVars(apiConfig)
 	for key, value := range envVars {
 		if err := os.Setenv(key, value); err != nil {
-			log.Printf("Warning: Failed to set environment variable %s: %v", key, err)
+			fmt.Fprintf(os.Stderr, "Warning: Failed to set environment variable %s: %v\n", key, err)
 		}
 	}
 }
