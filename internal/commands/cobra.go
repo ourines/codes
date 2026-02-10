@@ -2,11 +2,11 @@ package commands
 
 import (
 	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"codes/internal/ui"
-	"strings"
 )
 
 // InitCmd represents the init command
