@@ -1,11 +1,14 @@
 package commands
 
 import (
+	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
 	"github.com/spf13/cobra"
 
+	"codes/internal/config"
 	"codes/internal/ui"
 )
 
@@ -16,16 +19,6 @@ var InitCmd = &cobra.Command{
 	Long:  "Verify Claude CLI installation and validate configuration files",
 	Run: func(cmd *cobra.Command, args []string) {
 		RunInit()
-	},
-}
-
-// InstallCmd represents the install command
-var InstallCmd = &cobra.Command{
-	Use:   "install",
-	Short: "Install codes CLI to system",
-	Long:  "Install codes CLI to system PATH for global access",
-	Run: func(cmd *cobra.Command, args []string) {
-		RunInstall()
 	},
 }
 
@@ -55,6 +48,7 @@ var TestCmd = &cobra.Command{
 	Short: "Test API configuration",
 	Long:  "Test API connectivity for all configurations or a specific one",
 	Args:  cobra.MaximumNArgs(1),
+	ValidArgsFunction: completeConfigNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		RunTest(args)
 	},
@@ -100,6 +94,7 @@ var StartCmd = &cobra.Command{
 	Use:   "start [path-or-project-name]",
 	Short: "Start Claude in a specific directory",
 	Long:  "Start Claude Code in a specific directory, project alias, or last used directory",
+	ValidArgsFunction: completeProjectNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		RunStart(args)
 	},
@@ -125,6 +120,15 @@ var ConfigSetCmd = &cobra.Command{
 	Short: "Set a configuration value",
 	Long:  "Set a configuration value (keys: defaultBehavior)",
 	Args:  cobra.ExactArgs(2),
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) == 0 {
+			return []string{"defaultBehavior"}, cobra.ShellCompDirectiveNoFileComp
+		}
+		if len(args) == 1 && args[0] == "defaultBehavior" {
+			return []string{"current", "last", "home"}, cobra.ShellCompDirectiveNoFileComp
+		}
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		RunConfigSet(args[0], args[1])
 	},
@@ -132,10 +136,11 @@ var ConfigSetCmd = &cobra.Command{
 
 // ConfigGetCmd represents the config get command
 var ConfigGetCmd = &cobra.Command{
-	Use:   "get [key]",
-	Short: "Get configuration values",
-	Long:  "Get configuration values. If no key is specified, show all configuration",
-	Args:  cobra.MaximumNArgs(1),
+	Use:       "get [key]",
+	Short:     "Get configuration values",
+	Long:      "Get configuration values. If no key is specified, show all configuration",
+	Args:      cobra.MaximumNArgs(1),
+	ValidArgs: []string{"defaultBehavior"},
 	Run: func(cmd *cobra.Command, args []string) {
 		RunConfigGet(args)
 	},
@@ -150,10 +155,11 @@ var DefaultBehaviorCmd = &cobra.Command{
 
 // DefaultBehaviorSetCmd represents the defaultbehavior set command
 var DefaultBehaviorSetCmd = &cobra.Command{
-	Use:   "set <behavior>",
-	Short: "Set the default behavior",
-	Long:  "Set the default startup behavior: 'current' (current directory), 'last' (last used directory), 'home' (home directory)",
-	Args:  cobra.ExactArgs(1),
+	Use:       "set <behavior>",
+	Short:     "Set the default behavior",
+	Long:      "Set the default startup behavior: 'current' (current directory), 'last' (last used directory), 'home' (home directory)",
+	Args:      cobra.ExactArgs(1),
+	ValidArgs: []string{"current", "last", "home"},
 	Run: func(cmd *cobra.Command, args []string) {
 		RunDefaultBehaviorSet(args[0])
 	},
@@ -188,10 +194,11 @@ var SkipPermissionsCmd = &cobra.Command{
 
 // SkipPermissionsSetCmd represents the skippermissions set command
 var SkipPermissionsSetCmd = &cobra.Command{
-	Use:   "set <true|false>",
-	Short: "Set the global skipPermissions",
-	Long:  "Set whether to use --dangerously-skip-permissions for all configurations that don't have their own setting",
-	Args:  cobra.ExactArgs(1),
+	Use:       "set <true|false>",
+	Short:     "Set the global skipPermissions",
+	Long:      "Set whether to use --dangerously-skip-permissions for all configurations that don't have their own setting",
+	Args:      cobra.ExactArgs(1),
+	ValidArgs: []string{"true", "false"},
 	Run: func(cmd *cobra.Command, args []string) {
 		value := strings.ToLower(args[0])
 		var skip bool
@@ -245,6 +252,7 @@ var ProjectRemoveCmd = &cobra.Command{
 	Short: "Remove a project alias",
 	Long:  "Remove a project alias",
 	Args:  cobra.ExactArgs(1),
+	ValidArgsFunction: completeProjectNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		RunProjectRemove(args[0])
 	},
@@ -275,4 +283,65 @@ func init() {
 	SkipPermissionsCmd.AddCommand(SkipPermissionsSetCmd)
 	SkipPermissionsCmd.AddCommand(SkipPermissionsGetCmd)
 	SkipPermissionsCmd.AddCommand(SkipPermissionsResetCmd)
+}
+
+// CompletionCmd generates shell completion scripts
+var CompletionCmd = &cobra.Command{
+	Use:   "completion [bash|zsh|fish|powershell]",
+	Short: "Generate shell completion script",
+	Long: `Generate shell completion script for the specified shell.
+
+Usage examples:
+  # Bash
+  source <(codes completion bash)
+
+  # Zsh
+  source <(codes completion zsh)
+
+  # Fish
+  codes completion fish | source
+
+  # PowerShell
+  codes completion powershell | Out-String | Invoke-Expression`,
+	Args:      cobra.ExactArgs(1),
+	ValidArgs: []string{"bash", "zsh", "fish", "powershell"},
+	RunE: func(cmd *cobra.Command, args []string) error {
+		switch args[0] {
+		case "bash":
+			return cmd.Root().GenBashCompletionV2(os.Stdout, true)
+		case "zsh":
+			return cmd.Root().GenZshCompletion(os.Stdout)
+		case "fish":
+			return cmd.Root().GenFishCompletion(os.Stdout, true)
+		case "powershell":
+			return cmd.Root().GenPowerShellCompletionWithDesc(os.Stdout)
+		}
+		return fmt.Errorf("unsupported shell: %s", args[0])
+	},
+}
+
+// completeConfigNames provides dynamic completion for API config names
+func completeConfigNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var names []string
+	for _, c := range cfg.Configs {
+		names = append(names, c.Name)
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
+}
+
+// completeProjectNames provides dynamic completion for project names
+func completeProjectNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	projects, err := config.ListProjects()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveDefault
+	}
+	var names []string
+	for name := range projects {
+		names = append(names, name)
+	}
+	return names, cobra.ShellCompDirectiveDefault
 }

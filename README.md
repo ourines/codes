@@ -16,6 +16,12 @@ A powerful CLI tool for managing multiple Claude Code configurations with ease. 
 - **Permission Control**: Manage --dangerously-skip-permissions flag for Claude CLI
 - **Flexible Startup Behavior**: Control where Claude starts when no arguments provided
 
+## Quick Install
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ourines/codes/main/install.sh | sh
+```
+
 ## Installation
 
 ### Pre-built Binaries
@@ -29,16 +35,16 @@ Download the latest release for your platform from the [releases page](https://g
 curl -L https://github.com/ourines/codes/releases/latest/download/codes-linux-amd64 -o codes
 chmod +x codes
 
-# Install to system path
-./codes install
+# Install to system path and set up shell completion
+./codes init
 ```
 
 #### Windows
 
 ```powershell
 # Download the binary for your architecture
-# Then run the install command
-.\codes.exe install
+# Then run the init command
+.\codes.exe init
 ```
 
 ### Build from Source
@@ -55,19 +61,19 @@ cd codes
 # Build the binary
 make build
 
-# Install to system PATH
-./codes install
+# Install to system PATH and set up shell completion
+./codes init
 ```
 
 ## Quick Start
 
-### 1. Check Your Environment (Optional but Recommended)
+### 1. Initialize Your Environment
 
 ```bash
 codes init
 ```
 
-This will verify that everything is set up correctly and guide you if something is missing.
+This installs the binary to your system PATH, sets up shell completion, and verifies that everything is configured correctly.
 
 ### 2. Add Your First Configuration
 
@@ -102,14 +108,16 @@ An interactive menu will appear showing all your configurations. Select one to s
 
 ### `codes init`
 
-Check your environment and validate your configuration. This command performs comprehensive checks including:
+Initialize and configure the codes CLI. This command performs three main tasks:
 
-- Verifies Claude CLI installation
-- Detects existing Claude configuration in environment variables
-- Offers to import existing configuration if found
-- Checks configuration file existence and validity
-- Tests API connectivity for the default configuration
-- Displays detailed status of all configurations
+1. **Installs the binary** to your system PATH (`/usr/local/bin` on Linux/macOS, `~/go/bin` on Windows)
+2. **Sets up shell completion** automatically for your current shell
+3. **Runs environment health checks**, including:
+   - Verifies Claude CLI installation
+   - Detects existing Claude configuration in environment variables
+   - Offers to import existing configuration if found
+   - Checks configuration file existence and validity
+   - Tests API connectivity for the default configuration
 
 ```bash
 codes init
@@ -117,14 +125,14 @@ codes init
 
 **Example output:**
 ```
+✓ Binary installed to /usr/local/bin/codes
+✓ Shell completion configured for zsh
 ✓ Claude CLI is installed
 ✓ Found existing configuration in environment variables
 ✓ Configuration file exists
 ✓ Found 3 configuration(s)
 ✓ Default configuration is working
 ```
-
-This is a great command to run after installation or when troubleshooting issues.
 
 ### `codes` (no arguments)
 
@@ -139,6 +147,30 @@ You can also specify a directory or project alias:
 ```bash
 codes /path/to/project
 codes my-project  # if you've added a project alias
+```
+
+### `codes completion [shell]`
+
+Generate shell completion scripts. While `codes init` automatically sets up completion, you can also generate scripts manually.
+
+```bash
+codes completion [bash|zsh|fish|powershell]
+```
+
+**Manual setup (for reference):**
+
+```bash
+# Zsh (add to ~/.zshrc)
+source <(codes completion zsh)
+
+# Bash (add to ~/.bashrc)
+source <(codes completion bash)
+
+# Fish
+codes completion fish | source
+
+# PowerShell
+codes completion powershell | Out-String | Invoke-Expression
 ```
 
 ### `codes add`
@@ -268,17 +300,6 @@ codes skippermissions reset
 - Setting is stored in config.json under `SkipPermissions` field
 - Individual configurations can have their own `skipPermissions` setting that takes precedence
 - This controls whether Claude bypasses certain security checks for file system access
-
-### `codes install`
-
-Install the codes binary to your system PATH.
-
-```bash
-codes install
-```
-
-- **Linux/macOS**: Installs to `/usr/local/bin` or `~/bin`
-- **Windows**: Installs to `~/go/bin`
 
 ### `codes start [path-or-project]`
 
@@ -480,7 +501,7 @@ If you get permission errors during installation:
 
 ```bash
 # Use sudo for system-wide installation
-sudo ./codes install
+sudo ./codes init
 
 # Or install to user directory
 mkdir -p ~/bin

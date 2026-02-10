@@ -402,79 +402,6 @@ func RunAdd() {
 	}
 }
 
-func RunInstall() {
-	ui.ShowHeader("Installing codes CLI")
-
-	// 获取当前可执行文件路径
-	executablePath, err := os.Executable()
-	if err != nil {
-		ui.ShowError("Failed to get executable path", err)
-		return
-	}
-
-	// 确定安装目标路径
-	var targetDir string
-	var installPath string
-
-	switch runtime.GOOS {
-	case "windows":
-		// Windows: 安装到用户目录下的Scripts目录
-		homeDir, _ := os.UserHomeDir()
-		targetDir = filepath.Join(homeDir, "go", "bin")
-		installPath = filepath.Join(targetDir, "codes.exe")
-	default:
-		// Linux/macOS: 安装到/usr/local/bin或~/bin
-		if ui.CanWriteTo("/usr/local/bin") {
-			targetDir = "/usr/local/bin"
-			installPath = filepath.Join(targetDir, "codes")
-		} else {
-			homeDir, _ := os.UserHomeDir()
-			targetDir = filepath.Join(homeDir, "bin")
-			installPath = filepath.Join(targetDir, "codes")
-		}
-	}
-
-	ui.ShowInfo("Installing to: %s", installPath)
-
-	// 创建目标目录
-	err = os.MkdirAll(targetDir, 0755)
-	if err != nil {
-		ui.ShowError("Failed to create target directory", err)
-		return
-	}
-
-	// 复制文件
-	sourceData, err := os.ReadFile(executablePath)
-	if err != nil {
-		ui.ShowError("Failed to read executable", err)
-		return
-	}
-
-	err = os.WriteFile(installPath, sourceData, 0755)
-	if err != nil {
-		ui.ShowError("Failed to write to target location", err)
-		return
-	}
-
-	// 验证安装
-	if _, err := os.Stat(installPath); err == nil {
-		ui.ShowSuccess("codes installed successfully!")
-		ui.ShowInfo("Installed to: %s", installPath)
-
-		// 提示添加到PATH
-		switch runtime.GOOS {
-		case "windows":
-			ui.ShowInfo("Add %s to your PATH environment variable", targetDir)
-		default:
-			if targetDir != "/usr/local/bin" {
-				ui.ShowInfo("Add %s to your PATH in your shell profile", targetDir)
-			}
-		}
-	} else {
-		ui.ShowError("Installation verification failed", err)
-	}
-}
-
 func RunClaudeWithConfig(args []string) {
 	// 调用更新检查
 	checkForUpdates()
@@ -539,13 +466,155 @@ func installClaude(version string) {
 	ui.ShowSuccess("Claude installed successfully!")
 }
 
+// installBinary copies the codes binary to a system PATH location.
+// Returns the install path and whether it was newly installed.
+func installBinary() (string, bool) {
+	executablePath, err := os.Executable()
+	if err != nil {
+		ui.ShowError("Failed to get executable path", err)
+		return "", false
+	}
+
+	var targetDir string
+	var installPath string
+
+	switch runtime.GOOS {
+	case "windows":
+		homeDir, _ := os.UserHomeDir()
+		targetDir = filepath.Join(homeDir, "go", "bin")
+		installPath = filepath.Join(targetDir, "codes.exe")
+	default:
+		if ui.CanWriteTo("/usr/local/bin") {
+			targetDir = "/usr/local/bin"
+			installPath = filepath.Join(targetDir, "codes")
+		} else {
+			homeDir, _ := os.UserHomeDir()
+			targetDir = filepath.Join(homeDir, "bin")
+			installPath = filepath.Join(targetDir, "codes")
+		}
+	}
+
+	// Check if already installed at target and same binary
+	executablePath, _ = filepath.EvalSymlinks(executablePath)
+	targetResolved, _ := filepath.EvalSymlinks(installPath)
+	if executablePath == targetResolved {
+		ui.ShowSuccess("✓ codes is already installed at %s", installPath)
+		return installPath, false
+	}
+
+	ui.ShowInfo("Installing codes to: %s", installPath)
+
+	if err := os.MkdirAll(targetDir, 0755); err != nil {
+		ui.ShowError("Failed to create target directory", err)
+		return "", false
+	}
+
+	sourceData, err := os.ReadFile(executablePath)
+	if err != nil {
+		ui.ShowError("Failed to read executable", err)
+		return "", false
+	}
+
+	if err := os.WriteFile(installPath, sourceData, 0755); err != nil {
+		ui.ShowError("Failed to write to target location", err)
+		return "", false
+	}
+
+	ui.ShowSuccess("✓ codes installed to %s", installPath)
+
+	if runtime.GOOS != "windows" && targetDir != "/usr/local/bin" {
+		ui.ShowWarning("  Make sure %s is in your PATH", targetDir)
+	}
+
+	return installPath, true
+}
+
+// installShellCompletion detects the user's shell and installs completion.
+func installShellCompletion() {
+	shellPath := os.Getenv("SHELL")
+	if shellPath == "" {
+		ui.ShowWarning("⚠ Could not detect shell, skipping completion setup")
+		return
+	}
+
+	shell := filepath.Base(shellPath)
+	homeDir, _ := os.UserHomeDir()
+
+	switch shell {
+	case "zsh":
+		configFile := filepath.Join(homeDir, ".zshrc")
+		appendCompletionLine(configFile, "source <(codes completion zsh)")
+	case "bash":
+		configFile := filepath.Join(homeDir, ".bashrc")
+		if runtime.GOOS == "darwin" {
+			configFile = filepath.Join(homeDir, ".bash_profile")
+		}
+		appendCompletionLine(configFile, "source <(codes completion bash)")
+	case "fish":
+		completionDir := filepath.Join(homeDir, ".config", "fish", "completions")
+		if err := os.MkdirAll(completionDir, 0755); err != nil {
+			ui.ShowError("Failed to create fish completions directory", err)
+			return
+		}
+		completionFile := filepath.Join(completionDir, "codes.fish")
+		if _, err := os.Stat(completionFile); err == nil {
+			ui.ShowSuccess("✓ Fish completion already installed at %s", completionFile)
+			return
+		}
+		// Write a loader script that generates completions on demand
+		content := "# codes CLI completion\ncodes completion fish | source\n"
+		if err := os.WriteFile(completionFile, []byte(content), 0644); err != nil {
+			ui.ShowError("Failed to write fish completion", err)
+			return
+		}
+		ui.ShowSuccess("✓ Fish completion installed at %s", completionFile)
+	default:
+		ui.ShowWarning("⚠ Unsupported shell: %s, skipping completion setup", shell)
+		ui.ShowInfo("  You can manually run: codes completion --help")
+	}
+}
+
+// appendCompletionLine appends a completion source line to a shell config file if not already present.
+func appendCompletionLine(configFile, completionLine string) {
+	if data, err := os.ReadFile(configFile); err == nil {
+		if strings.Contains(string(data), "codes completion") {
+			ui.ShowSuccess("✓ Shell completion already configured in %s", configFile)
+			return
+		}
+	}
+
+	f, err := os.OpenFile(configFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	if err != nil {
+		ui.ShowError("Failed to write to "+configFile, err)
+		return
+	}
+	defer f.Close()
+
+	if _, err := fmt.Fprintf(f, "\n# codes CLI completion\n%s\n", completionLine); err != nil {
+		ui.ShowError("Failed to write completion config", err)
+		return
+	}
+
+	ui.ShowSuccess("✓ Shell completion installed in %s", configFile)
+}
+
 func RunInit() {
-	ui.ShowHeader("Codes CLI Environment Check")
+	ui.ShowHeader("Codes CLI Setup")
 	fmt.Println()
 
 	allGood := true
 
-	// 1. Check if Claude CLI is installed
+	// 1. Install binary to system PATH
+	ui.ShowInfo("Installing codes CLI...")
+	installBinary()
+	fmt.Println()
+
+	// 2. Install shell completion
+	ui.ShowInfo("Setting up shell completion...")
+	installShellCompletion()
+	fmt.Println()
+
+	// 3. Check if Claude CLI is installed
 	ui.ShowInfo("Checking Claude CLI installation...")
 	if _, err := exec.LookPath("claude"); err != nil {
 		ui.ShowError("✗ Claude CLI not found", nil)
@@ -564,7 +633,7 @@ func RunInit() {
 	}
 	fmt.Println()
 
-	// 2. Check for existing environment variables
+	// 4. Check for existing environment variables
 	ui.ShowInfo("Checking for existing Claude configuration...")
 	baseURL := os.Getenv("ANTHROPIC_BASE_URL")
 	authToken := os.Getenv("ANTHROPIC_AUTH_TOKEN")
@@ -586,7 +655,7 @@ func RunInit() {
 	}
 	fmt.Println()
 
-	// 3. Check if config file exists
+	// 5. Check if config file exists
 	ui.ShowInfo("Checking configuration file...")
 	configExists := false
 	if _, err := os.Stat(config.ConfigPath); err == nil {
@@ -657,7 +726,7 @@ func RunInit() {
 		ui.ShowSuccess("✓ Configuration file exists")
 		ui.ShowInfo("  Location: %s", config.ConfigPath)
 
-		// 4. Validate configuration
+		// 6. Validate configuration
 		cfg, err := config.LoadConfig()
 		if err != nil {
 			ui.ShowError("✗ Failed to load configuration", err)
@@ -725,7 +794,7 @@ func RunInit() {
 					}
 				}
 
-				// 4. Test default configuration
+				// Test default configuration
 				if cfg.Default != "" {
 					fmt.Println()
 					ui.ShowInfo("Testing default configuration '%s'...", cfg.Default)

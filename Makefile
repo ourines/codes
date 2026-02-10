@@ -9,7 +9,7 @@ help:
 	@echo "  clean    - Clean build artifacts"
 	@echo "  test     - Test the build"
 	@echo "  version  - Show version"
-	@echo "  install  - Install codes to system"
+	@echo "  install  - Build and run init (install + setup)"
 	@echo ""
 	@echo "Usage: make [target]"
 
@@ -28,7 +28,7 @@ test:
 	@if [ -f "$(BINARY)" ]; then \
 		./$(BINARY) --help > /dev/null 2>&1 && echo "✓ Help works"; \
 		./$(BINARY) version && echo "✓ Version works"; \
-		./$(BINARY) install --help 2>/dev/null && echo "✓ Install command exists"; \
+		./$(BINARY) completion bash > /dev/null 2>&1 && echo "✓ Completion works"; \
 	else \
 		echo "✗ Not built"; \
 	fi
@@ -36,7 +36,7 @@ test:
 version:
 	@./$(BINARY) version 2>/dev/null || echo "Not built"
 
-install:
+install: build
 	@echo "Installing codes..."
-	@./$(BINARY) install
+	@./$(BINARY) init
 	@echo "Install completed"

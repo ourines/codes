@@ -17,7 +17,6 @@ var rootCmd = &cobra.Command{
 
 func init() {
 	rootCmd.AddCommand(commands.InitCmd)
-	rootCmd.AddCommand(commands.InstallCmd)
 	rootCmd.AddCommand(commands.AddCmd)
 	rootCmd.AddCommand(commands.SelectCmd)
 	rootCmd.AddCommand(commands.TestCmd)
@@ -28,6 +27,7 @@ func init() {
 	rootCmd.AddCommand(commands.ConfigCmd)
 	rootCmd.AddCommand(commands.DefaultBehaviorCmd)
 	rootCmd.AddCommand(commands.SkipPermissionsCmd)
+	rootCmd.AddCommand(commands.CompletionCmd)
 
 	// 设置默认运行时行为 - 现在使用智能启动
 	rootCmd.Run = func(cmd *cobra.Command, args []string) {
