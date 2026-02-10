@@ -984,7 +984,7 @@ func runClaudeInDirectory(dir string) {
 	}
 
 	// Set environment variables
-	config.SetEnvironmentVarsWithConfig(&selectedConfig, cfg)
+	config.SetEnvironmentVarsWithConfig(&selectedConfig)
 
 	ui.ShowInfo("Using configuration: %s", selectedConfig.Name)
 	ui.ShowInfo("Working directory: %s", dir)
@@ -1187,7 +1187,7 @@ func RunConfigSet(key, value string) {
 		cfg.DefaultBehavior = value
 		ui.ShowSuccess("Default behavior set to: %s", value)
 	default:
-		ui.ShowError("Unknown configuration key: %s", nil)
+		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
 		fmt.Printf("Available keys: defaultBehavior\n")
 		return
 	}
@@ -1213,7 +1213,7 @@ func RunConfigGet(args []string) {
 		case "defaultBehavior":
 			fmt.Printf("%s: %s\n", key, cfg.DefaultBehavior)
 		default:
-			ui.ShowError("Unknown configuration key: %s", nil)
+			ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
 			fmt.Printf("Available keys: defaultBehavior\n")
 			return
 		}
