@@ -1,20 +1,19 @@
 # Codes CLI
 
-A powerful CLI tool for managing multiple Claude Code configurations with ease. Switch between different Claude API endpoints, manage authentication tokens, and streamline your AI-powered development workflow.
+A powerful CLI tool for managing multiple Claude Code configurations with ease. Includes an interactive TUI, MCP server integration, and multi-session terminal management.
 
 ## Features
 
-- **Multi-Configuration Management**: Manage multiple Claude API configurations (official Anthropic, proxies, or alternative providers)
-- **Easy Switching**: Quickly switch between configurations with an interactive selector
-- **Smart Directory Launch**: Remember last working directory and support project aliases for quick access
-- **Environment Import**: Automatically detect and import existing Claude configurations from environment variables
-- **Automatic Installation**: Automatically installs and updates Claude CLI when needed
-- **API Validation**: Tests API connectivity before saving configurations and provides testing tools
+- **Interactive TUI**: Full terminal UI with Projects, Profiles, and Settings tabs
+- **Multi-Profile Management**: Manage multiple API profiles (official Anthropic, proxies, or alternative providers)
+- **Session Manager**: Launch Claude in separate terminal windows with multi-instance support per project
+- **MCP Server**: Expose project and profile management as MCP tools for Claude Code integration
+- **Smart Directory Launch**: Remember last working directory and support project aliases
+- **Environment Import**: Auto-detect and import existing Claude configurations from environment variables
+- **API Validation**: Test API connectivity before saving and provide testing tools
 - **Cross-Platform**: Support for Linux, macOS, and Windows (amd64 & arm64)
-- **Zero Configuration**: Works out of the box with sensible defaults
-- **Configuration Management**: Global configuration settings for CLI behavior
-- **Permission Control**: Manage --dangerously-skip-permissions flag for Claude CLI
-- **Flexible Startup Behavior**: Control where Claude starts when no arguments provided
+- **JSON Output**: Machine-readable output via `--json` flag for scripting
+- **Shell Completion**: Auto-completion for bash, zsh, fish, and powershell
 
 ## Quick Install
 
@@ -36,8 +35,6 @@ irm https://raw.githubusercontent.com/ourines/codes/main/install.ps1 | iex
 
 Download the latest release for your platform from the [releases page](https://github.com/ourines/codes/releases).
 
-#### Linux / macOS
-
 ```bash
 # Download and extract (example for linux-amd64)
 curl -L https://github.com/ourines/codes/releases/latest/download/codes-linux-amd64 -o codes
@@ -47,143 +44,100 @@ chmod +x codes
 ./codes init
 ```
 
-#### Windows
-
-```powershell
-# Download the binary for your architecture
-# Then run the init command
-.\codes.exe init
-```
-
 ### Build from Source
 
 Requirements:
-- Go 1.21 or later
+- Go 1.24 or later
 - npm (required for Claude CLI installation)
 
 ```bash
-# Clone the repository
 git clone https://github.com/ourines/codes.git
 cd codes
-
-# Build the binary
 make build
-
-# Install to system PATH and set up shell completion
 ./codes init
 ```
 
-## Quick Start
+## Usage
 
-### 1. Initialize Your Environment
+### Interactive TUI
 
-```bash
-codes init
-```
-
-This installs the binary to your system PATH, sets up shell completion, and verifies that everything is configured correctly.
-
-### 2. Add Your First Configuration
-
-```bash
-codes add
-```
-
-You'll be prompted to enter:
-- Configuration name (e.g., "official", "proxy")
-- `ANTHROPIC_BASE_URL` (e.g., `https://api.anthropic.com`)
-- `ANTHROPIC_AUTH_TOKEN` (your API key)
-
-The tool will automatically test the API connection before saving.
-
-### 3. Run Claude with Your Configuration
+Running `codes` without arguments in a terminal launches the interactive TUI:
 
 ```bash
 codes
 ```
 
-This will launch Claude CLI with the selected configuration's environment variables.
+The TUI has three tabs (cycle with `Tab`):
 
-### 4. Switch Between Configurations
+| Tab | Description | Key Bindings |
+|-----|-------------|--------------|
+| **Projects** | Manage project aliases, launch sessions | `a` add, `d` delete, `Enter` open session, `→` sessions panel, `k` kill, `t` cycle terminal |
+| **Profiles** | Manage API profiles, switch default | `a` add profile, `Enter` set as default |
+| **Settings** | Configure terminal, behavior, permissions | `↑↓` navigate, `Enter`/`Space` cycle value |
+
+**Settings tab options:**
+
+| Setting | Values | Description |
+|---------|--------|-------------|
+| Terminal | terminal / iterm / warp | Terminal emulator for sessions |
+| Default Behavior | current / last / home | Where Claude starts without arguments |
+| Skip Permissions | off / on | Global `--dangerously-skip-permissions` |
+| Config File | *(read-only)* | Shows config file path |
+
+### Session Manager
+
+From the Projects tab, press `Enter` on a project to launch Claude in a new terminal window. Each project supports multiple concurrent sessions.
+
+- Sessions open in the configured terminal (Terminal.app, iTerm2, or Warp on macOS)
+- Press `→` to view running sessions for the selected project
+- Press `k` to kill sessions
+- Session status auto-refreshes every 3 seconds
+
+### MCP Server
+
+Start codes as an MCP server for integration with Claude Code:
 
 ```bash
-codes select
+codes serve
 ```
 
-An interactive menu will appear showing all your configurations. Select one to switch and launch Claude.
+**Available MCP tools:**
+
+| Tool | Description |
+|------|-------------|
+| `list_projects` | List all project aliases with git status |
+| `add_project` | Add a new project alias |
+| `remove_project` | Remove a project alias |
+| `list_profiles` | List all API profiles with status |
+| `switch_profile` | Switch the default API profile |
+| `get_project_info` | Get detailed project info (git branch, dirty status) |
+
+**Claude Code MCP config** (`~/.claude/claude_desktop_config.json`):
+
+```json
+{
+  "mcpServers": {
+    "codes": {
+      "command": "codes",
+      "args": ["serve"]
+    }
+  }
+}
+```
 
 ## Commands
 
 ### `codes init`
 
-Initialize and configure the codes CLI. This command performs three main tasks:
-
-1. **Installs the binary** to your system PATH (`/usr/local/bin` on Linux/macOS, `~/go/bin` on Windows)
-2. **Sets up shell completion** automatically for your current shell
-3. **Runs environment health checks**, including:
-   - Verifies Claude CLI installation
-   - Detects existing Claude configuration in environment variables
-   - Offers to import existing configuration if found
-   - Checks configuration file existence and validity
-   - Tests API connectivity for the default configuration
+Initialize the CLI: install binary, set up shell completion, run health checks.
 
 ```bash
 codes init
 ```
 
-**Example output:**
-```text
-✓ Binary installed to /usr/local/bin/codes
-✓ Shell completion configured for zsh
-✓ Claude CLI is installed
-✓ Found existing configuration in environment variables
-✓ Configuration file exists
-✓ Found 3 configuration(s)
-✓ Default configuration is working
-```
-
-### `codes` (no arguments)
-
-Runs Claude CLI with the currently selected configuration in the last used directory. If Claude CLI is not installed, it will be automatically installed. The tool remembers your last working directory for convenience.
-
-```bash
-codes
-```
-
-You can also specify a directory or project alias:
-
-```bash
-codes /path/to/project
-codes my-project  # if you've added a project alias
-```
-
-### `codes completion [shell]`
-
-Generate shell completion scripts. While `codes init` automatically sets up completion, you can also generate scripts manually.
-
-```bash
-codes completion [bash|zsh|fish|powershell]
-```
-
-**Manual setup (for reference):**
-
-```bash
-# Zsh (add to ~/.zshrc)
-source <(codes completion zsh)
-
-# Bash (add to ~/.bashrc)
-source <(codes completion bash)
-
-# Fish
-codes completion fish | source
-
-# PowerShell
-codes completion powershell | Out-String | Invoke-Expression
-```
-
 ### `codes add`
 
-Interactively add a new Claude API configuration.
+Interactively add a new API profile.
 
 ```bash
 codes add
@@ -191,166 +145,109 @@ codes add
 
 ### `codes select`
 
-Display all configurations and interactively select one to use.
+Display all profiles and interactively select one.
 
 ```bash
 codes select
 ```
 
+### `codes test [profile-name]`
+
+Test API connectivity for all profiles or a specific one.
+
+```bash
+codes test          # test all
+codes test work     # test specific profile
+```
+
+### `codes start [path-or-project]`
+
+Start Claude in a specific directory or project alias.
+
+```bash
+codes start .              # current directory
+codes start /path/to/dir   # specific path
+codes start my-project     # project alias
+```
+
+### `codes project`
+
+Manage project aliases.
+
+```bash
+codes project add my-app /path/to/my-app
+codes project list
+codes project remove my-app
+```
+
+### `codes terminal`
+
+Configure which terminal emulator to use for sessions.
+
+```bash
+codes terminal get            # show current
+codes terminal set iterm      # set to iTerm2
+codes terminal list           # list options
+```
+
+### `codes defaultbehavior`
+
+Control where Claude starts when no arguments are provided.
+
+```bash
+codes defaultbehavior get
+codes defaultbehavior set last    # current | last | home
+codes defaultbehavior reset
+```
+
+### `codes skippermissions`
+
+Manage the global `--dangerously-skip-permissions` flag.
+
+```bash
+codes skippermissions get
+codes skippermissions set true
+codes skippermissions reset
+```
+
+### `codes config`
+
+Manage global CLI configuration.
+
+```bash
+codes config get
+codes config set defaultBehavior last
+```
+
 ### `codes update`
 
-Update or install a specific version of Claude CLI.
+Update Claude CLI to a specific version.
 
 ```bash
 codes update
 ```
 
-Lists the latest 20 available versions from npm and allows you to:
-- Select a version by number (1-20)
-- Enter a specific version number (e.g., `1.2.3`)
-- Type `latest` to install the newest version
+### `codes serve`
 
-### `codes test`
-
-Test API configuration connectivity and validate configurations.
+Start MCP server over stdio.
 
 ```bash
-# Test all configured API endpoints
-codes test
-
-# Test a specific configuration
-codes test my-config
+codes serve
 ```
 
-**Features**:
-- Tests API connectivity using actual Claude API endpoint (`/v1/messages`)
-- Shows model being used for each test
-- Updates configuration status (active/inactive) based on test results
-- Displays test results with clear success/failure indicators
-- Tests all environment variables including authentication tokens and base URLs
-- Validates that required fields are present and properly formatted
+### `codes completion [shell]`
 
-### `codes config`
-
-Manage global CLI configuration settings.
+Generate shell completion scripts.
 
 ```bash
-# Show all configuration values
-codes config get
-
-# Show specific configuration value
-codes config get <key>
-
-# Set configuration value
-codes config set <key> <value>
-```
-
-**Current Configuration Keys**:
-- `defaultBehavior` - Controls where Claude starts when no arguments are provided
-
-**Environment Variables Managed**:
-- While the config command itself doesn't directly manage environment variables, it works with configurations that contain environment variables for:
-  - `ANTHROPIC_BASE_URL` - API endpoint URL
-  - `ANTHROPIC_AUTH_TOKEN` - Authentication token
-  - `ANTHROPIC_MODEL` - Default model
-  - `ANTHROPIC_DEFAULT_HAIKU_MODEL` - Haiku model override
-  - `ANTHROPIC_DEFAULT_OPUS_MODEL` - Opus model override
-  - `ANTHROPIC_DEFAULT_SONNET_MODEL` - Sonnet model override
-  - And other Claude CLI recognized environment variables
-
-### `codes defaultbehavior`
-
-Manage the default startup behavior when running `codes` without arguments.
-
-```bash
-# Show current default behavior
-codes defaultbehavior get
-
-# Set default behavior
-codes defaultbehavior set <behavior>
-
-# Reset to default
-codes defaultbehavior reset
-```
-
-**Available Behaviors**:
-- `current` - Start Claude in the current working directory (default)
-- `last` - Start Claude in the last used directory (remembered from previous runs)
-- `home` - Start Claude in the user's home directory
-
-**Important Details**:
-- Behavior is saved in config.json under `DefaultBehavior` field
-- When `codes` is run without arguments, it uses this setting to determine the working directory
-- The `codes start` command still works with project aliases and specific paths
-
-### `codes skippermissions`
-
-Manage the global `--dangerously-skip-permissions` flag setting for Claude CLI.
-
-```bash
-# Show current global skipPermissions setting
-codes skippermissions get
-
-# Set global skipPermissions
-codes skippermissions set <true|false>
-
-# Reset to default
-codes skippermissions reset
-```
-
-**How It Works**:
-- Global setting applies to all configurations that don't have their own `skipPermissions` setting
-- When `true`, Claude runs with `--dangerously-skip-permissions` flag
-- When `false` (default), Claude runs without the flag
-- Individual configurations can override this global setting during `codes add` or by editing the config file
-
-**Important Details**:
-- Setting is stored in config.json under `SkipPermissions` field
-- Individual configurations can have their own `skipPermissions` setting that takes precedence
-- This controls whether Claude bypasses certain security checks for file system access
-
-### `codes start [path-or-project]`
-
-Start Claude Code in a specific directory or using a project alias. Without arguments, it uses the last working directory.
-
-```bash
-# Start in current directory (and remember it)
-codes start .
-
-# Start in specific path
-codes start /path/to/project
-
-# Start using project alias
-codes start my-project
-```
-
-### `codes project add <name> <path>`
-
-Add a project alias for quick access to frequently used directories.
-
-```bash
-codes project add my-app /path/to/my-app
-```
-
-### `codes project list`
-
-List all configured project aliases.
-
-```bash
-codes project list
-```
-
-### `codes project remove <name>`
-
-Remove a project alias.
-
-```bash
-codes project remove my-app
+source <(codes completion zsh)    # Zsh
+source <(codes completion bash)   # Bash
+codes completion fish | source    # Fish
 ```
 
 ### `codes version`
 
-Display the current version of codes CLI.
+Display the current version.
 
 ```bash
 codes version
@@ -358,33 +255,33 @@ codes version
 
 ## Configuration
 
-### Configuration File Location
+### File Location
 
-The tool searches for `config.json` in the following order:
+The tool searches for `config.json` in order:
 
 1. Current working directory: `./config.json`
 2. User home directory: `~/.codes/config.json`
 
-### Configuration Format
-
-Create a `config.json` file with the following structure:
+### Format
 
 ```json
 {
-  "configs": [
+  "profiles": [
     {
-      "name": "official",
+      "name": "work",
       "env": {
         "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
         "ANTHROPIC_AUTH_TOKEN": "sk-ant-xxxxx",
-        "ANTHROPIC_MODEL": "claude-3-5-sonnet-20241022"
+        "ANTHROPIC_MODEL": "claude-sonnet-4-20250514"
       },
-      "skipPermissions": false
+      "skipPermissions": false,
+      "status": "active"
     }
   ],
-  "default": "official",
+  "default": "work",
   "skipPermissions": false,
   "defaultBehavior": "current",
+  "terminal": "terminal",
   "projects": {
     "my-project": "/path/to/project"
   },
@@ -392,33 +289,43 @@ Create a `config.json` file with the following structure:
 }
 ```
 
-### Configuration Fields
+> **Backward compatibility**: Old config files using `"configs"` instead of `"profiles"` are automatically migrated on load.
 
-#### Global Settings
-- `default`: The configuration name to use by default
-- `skipPermissions`: Global setting for `--dangerously-skip-permissions` flag (applies to all configs unless overridden)
-- `defaultBehavior`: Controls where Claude starts when no arguments provided ("current", "last", "home")
-- `projects`: Object mapping project names to their directory paths
-- `lastWorkDir`: Last working directory remembered from previous runs
+### Fields
 
-#### Configuration Object
-- `name`: Unique identifier for the configuration
-- `env`: Object containing environment variables for Claude CLI:
-  - `ANTHROPIC_BASE_URL`: Base URL for the Claude API endpoint
-  - `ANTHROPIC_AUTH_TOKEN`: Authentication token for the API
-  - `ANTHROPIC_MODEL`: Default model to use
-  - And other Claude CLI recognized environment variables
-- `skipPermissions`: Per-configuration setting that overrides global `skipPermissions`
-- `status`: (optional) API status - "active", "inactive", or "unknown"
+| Field | Type | Description |
+|-------|------|-------------|
+| `profiles` | array | API profile configurations |
+| `default` | string | Name of the default profile |
+| `skipPermissions` | bool | Global `--dangerously-skip-permissions` flag |
+| `defaultBehavior` | string | Startup directory: `current`, `last`, or `home` |
+| `terminal` | string | Terminal emulator: `terminal`, `iterm`, `warp`, or custom |
+| `projects` | object | Project name → directory path mappings |
+| `lastWorkDir` | string | Last working directory (auto-saved) |
 
-### Example Configurations
+### Profile Fields
 
-See `config.json.example` for a complete example with multiple providers:
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Unique profile identifier |
+| `env` | object | Environment variables for Claude CLI |
+| `skipPermissions` | bool | Per-profile override (optional) |
+| `status` | string | `active`, `inactive`, or `unknown` |
 
-```bash
-cp config.json.example config.json
-# Edit config.json with your actual tokens
-```
+### Supported Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ANTHROPIC_BASE_URL` | API endpoint URL |
+| `ANTHROPIC_AUTH_TOKEN` | Authentication token |
+| `ANTHROPIC_API_KEY` | API key (alternative auth) |
+| `ANTHROPIC_MODEL` | Default model |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Haiku model override |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | Sonnet model override |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | Opus model override |
+| `MAX_THINKING_TOKENS` | Maximum thinking tokens |
+| `HTTP_PROXY` / `HTTPS_PROXY` | Proxy settings |
+| `NO_PROXY` | Proxy bypass list |
 
 ## Development
 
@@ -426,100 +333,71 @@ cp config.json.example config.json
 
 ```
 codes/
-├── cmd/codes/          # Main entry point
+├── cmd/codes/              # Main entry point
 ├── internal/
-│   ├── commands/       # Command implementations
-│   ├── config/         # Configuration management
-│   └── ui/             # User interface utilities
-├── .github/workflows/  # CI/CD pipelines
-├── Makefile           # Build automation
-└── config.json.example # Example configuration
+│   ├── commands/           # CLI command implementations
+│   ├── config/             # Configuration management
+│   ├── mcp/                # MCP server (stdio transport)
+│   ├── output/             # JSON output mode
+│   ├── session/            # Terminal session manager
+│   ├── tui/                # Interactive TUI (bubbletea)
+│   └── ui/                 # CLI output utilities
+├── .github/workflows/      # CI/CD pipelines
+├── Makefile                # Build automation
+└── config.json.example     # Example configuration
 ```
 
 ### Building
 
 ```bash
-# Build the binary
-make build
-
-# Run tests
-make test
-
-# Clean build artifacts
-make clean
-
-# Display version
-make version
-```
-
-### Running Tests
-
-```bash
-make test
+make build      # Build binary
+make test       # Run tests
+make clean      # Clean artifacts
 ```
 
 ## CI/CD
 
-This project uses GitHub Actions for continuous integration and automated releases:
+GitHub Actions pipelines:
 
-- **CI Pipeline**: Runs on every push to `main` and pull requests
-- **Release Pipeline**: Triggered by version tags (e.g., `v1.0.0`)
-
-### Creating a Release
+- **CI**: Runs on every push to `main` and pull requests
+- **Release**: Triggered by version tags (`v*`)
 
 ```bash
-# Tag a new version
 git tag v1.0.0
 git push origin v1.0.0
 ```
 
-This will automatically build binaries for all supported platforms and create a GitHub release.
-
 ## Requirements
 
-- **Go**: 1.21 or later (for building from source)
+- **Go**: 1.24 or later (for building from source)
 - **npm**: Required for installing/updating Claude CLI
-- **Claude CLI**: Automatically installed by the tool if not present
+- **Claude CLI**: Automatically installed if not present
 
 ## Troubleshooting
 
 ### Claude CLI Not Found
 
-If the tool can't find Claude CLI, run:
-
 ```bash
 codes update
 ```
 
-This will install the latest version of Claude CLI via npm.
-
 ### API Connection Failed
 
-If API validation fails when adding a configuration:
+1. Verify `ANTHROPIC_BASE_URL` is correct
+2. Check `ANTHROPIC_AUTH_TOKEN` is valid
+3. Ensure network connectivity to the API endpoint
 
-1. Verify your `ANTHROPIC_BASE_URL` is correct
-2. Check that your `ANTHROPIC_AUTH_TOKEN` is valid
-3. Ensure you have network connectivity to the API endpoint
-
-The configuration will still be saved but marked as "inactive" if validation fails.
+The profile will be saved but marked as "inactive" if validation fails.
 
 ### Permission Denied (Linux/macOS)
 
-If you get permission errors during installation:
-
 ```bash
-# Use sudo for system-wide installation
-sudo ./codes init
-
-# Or install to user directory
-mkdir -p ~/bin
-cp codes ~/bin/
-export PATH="$HOME/bin:$PATH"
+sudo ./codes init             # system-wide
+# or
+mkdir -p ~/bin && cp codes ~/bin/  # user directory
 ```
 
 ## Contributing
-
-Contributions are welcome! Please feel free to submit a Pull Request.
 
 1. Fork the repository
 2. Create your feature branch (`git checkout -b feature/amazing-feature`)
@@ -529,7 +407,7 @@ Contributions are welcome! Please feel free to submit a Pull Request.
 
 ## License
 
-[MIT License](LICENSE) - feel free to use this project for any purpose.
+[MIT License](LICENSE)
 
 ## Acknowledgments
 
