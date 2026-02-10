@@ -242,12 +242,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			} else if m.state == viewProfiles {
 				if item, ok := m.profileList.SelectedItem().(profileItem); ok {
+					profileName := item.cfg.Name
 					return m, func() tea.Msg {
-						if m.cfg != nil {
-							m.cfg.Default = item.cfg.Name
-							config.SaveConfig(m.cfg)
+						cfg, err := config.LoadConfig()
+						if err == nil {
+							cfg.Default = profileName
+							config.SaveConfig(cfg)
 						}
-						return profileSwitchedMsg{name: item.cfg.Name}
+						return profileSwitchedMsg{name: profileName}
 					}
 				}
 			}

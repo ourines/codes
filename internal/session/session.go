@@ -4,9 +4,18 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sync"
 	"time"
 )
+
+// safeIDPattern matches only characters safe for file paths, shell scripts, and AppleScript.
+var safeIDPattern = regexp.MustCompile(`[^a-zA-Z0-9_\-.]`)
+
+// sanitizeID replaces unsafe characters in a session/project name with underscores.
+func sanitizeID(name string) string {
+	return safeIDPattern.ReplaceAllString(name, "_")
+}
 
 // Status represents the state of a session.
 type Status int
@@ -73,10 +82,11 @@ func pidFilePath(sessionID string) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("codes-session-%s.pid", sessionID))
 }
 
-// nextSessionID generates the next session ID for a project (e.g., "myapp#1", "myapp#2").
+// nextSessionID generates the next session ID for a project (e.g., "myapp-1", "myapp-2").
+// The project name is sanitized to prevent injection in shell scripts and AppleScript.
 func (m *Manager) nextSessionID(projectName string) string {
 	m.counter[projectName]++
-	return fmt.Sprintf("%s#%d", projectName, m.counter[projectName])
+	return fmt.Sprintf("%s-%d", sanitizeID(projectName), m.counter[projectName])
 }
 
 // StartSession launches a new Claude Code session in a new terminal window.

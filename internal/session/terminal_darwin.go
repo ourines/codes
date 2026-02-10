@@ -11,6 +11,13 @@ import (
 	"time"
 )
 
+// escapeAppleScript escapes a string for safe embedding in AppleScript double-quoted strings.
+func escapeAppleScript(s string) string {
+	s = strings.ReplaceAll(s, "\\", "\\\\")
+	s = strings.ReplaceAll(s, "\"", "\\\"")
+	return s
+}
+
 // openInTerminal opens a new terminal window running Claude Code.
 // The terminal parameter selects which app to use: "iterm", "warp", or "" / "terminal" for Terminal.app.
 func openInTerminal(sessionID, dir string, args []string, env map[string]string, terminal string) (int, error) {
@@ -62,7 +69,7 @@ func openTerminalApp(scriptPath string) error {
 	appleScript := fmt.Sprintf(`tell application "Terminal"
 	activate
 	do script "bash '%s'"
-end tell`, scriptPath)
+end tell`, escapeAppleScript(scriptPath))
 
 	return exec.Command("osascript", "-e", appleScript).Run()
 }
@@ -75,7 +82,7 @@ func openITerm(scriptPath, sessionID string) error {
 		set name to "codes: %s"
 		write text "bash '%s'"
 	end tell
-end tell`, sessionID, scriptPath)
+end tell`, escapeAppleScript(sessionID), escapeAppleScript(scriptPath))
 
 	return exec.Command("osascript", "-e", appleScript).Run()
 }
@@ -113,5 +120,5 @@ func focusTerminalWindow(terminal string) {
 			return
 		}
 	}
-	exec.Command("osascript", "-e", fmt.Sprintf(`tell application "%s" to activate`, app)).Run()
+	exec.Command("osascript", "-e", fmt.Sprintf(`tell application "%s" to activate`, escapeAppleScript(app))).Run()
 }

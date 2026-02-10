@@ -5,9 +5,13 @@ package session
 import (
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 	"syscall"
 )
+
+// validEnvVarName matches valid POSIX environment variable names.
+var validEnvVarName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // isProcessAlive checks if a process with the given PID is still running.
 func isProcessAlive(pid int) bool {
@@ -47,6 +51,9 @@ func buildScript(name, dir string, args []string, env map[string]string) (script
 
 	// Set environment variables
 	for k, v := range env {
+		if !validEnvVarName.MatchString(k) {
+			continue // skip invalid variable names to prevent shell injection
+		}
 		escaped := strings.ReplaceAll(v, "'", "'\\''")
 		b.WriteString(fmt.Sprintf("export %s='%s'\n", k, escaped))
 	}
