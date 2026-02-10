@@ -48,7 +48,7 @@ var TestCmd = &cobra.Command{
 	Short: "Test API configuration",
 	Long:  "Test API connectivity for all configurations or a specific one",
 	Args:  cobra.MaximumNArgs(1),
-	ValidArgsFunction: completeConfigNames,
+	ValidArgsFunction: completeProfileNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		RunTest(args)
 	},
@@ -283,9 +283,52 @@ func init() {
 	SkipPermissionsCmd.AddCommand(SkipPermissionsSetCmd)
 	SkipPermissionsCmd.AddCommand(SkipPermissionsGetCmd)
 	SkipPermissionsCmd.AddCommand(SkipPermissionsResetCmd)
+
+	TerminalCmd.AddCommand(TerminalSetCmd)
+	TerminalCmd.AddCommand(TerminalGetCmd)
+	TerminalCmd.AddCommand(TerminalListCmd)
 }
 
 // CompletionCmd generates shell completion scripts
+// TerminalCmd represents the terminal command
+var TerminalCmd = &cobra.Command{
+	Use:   "terminal",
+	Short: "Manage terminal emulator setting",
+	Long:  "Configure which terminal emulator to use for Claude Code sessions",
+}
+
+// TerminalSetCmd sets the terminal emulator
+var TerminalSetCmd = &cobra.Command{
+	Use:       "set <terminal>",
+	Short:     "Set the terminal emulator",
+	Long:      "Set which terminal emulator to use: 'terminal' (Terminal.app), 'iterm' (iTerm2), 'warp' (Warp), or a custom command",
+	Args:      cobra.ExactArgs(1),
+	ValidArgs: []string{"terminal", "iterm", "warp"},
+	Run: func(cmd *cobra.Command, args []string) {
+		RunTerminalSet(args[0])
+	},
+}
+
+// TerminalGetCmd shows the current terminal emulator
+var TerminalGetCmd = &cobra.Command{
+	Use:   "get",
+	Short: "Show current terminal emulator",
+	Long:  "Show which terminal emulator is configured",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunTerminalGet()
+	},
+}
+
+// TerminalListCmd lists available terminal options
+var TerminalListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List available terminal options",
+	Long:  "List known terminal emulator options",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunTerminalList()
+	},
+}
+
 var CompletionCmd = &cobra.Command{
 	Use:   "completion [bash|zsh|fish|powershell]",
 	Short: "Generate shell completion script",
@@ -320,14 +363,24 @@ Usage examples:
 	},
 }
 
-// completeConfigNames provides dynamic completion for API config names
-func completeConfigNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+// ServeCmd represents the serve command for MCP server mode
+var ServeCmd = &cobra.Command{
+	Use:   "serve",
+	Short: "Start MCP server mode",
+	Long:  "Start codes as an MCP server over stdio for integration with Claude Code",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunServe()
+	},
+}
+
+// completeProfileNames provides dynamic completion for API profile names
+func completeProfileNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	cfg, err := config.LoadConfig()
 	if err != nil {
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	}
 	var names []string
-	for _, c := range cfg.Configs {
+	for _, c := range cfg.Profiles {
 		names = append(names, c.Name)
 	}
 	return names, cobra.ShellCompDirectiveNoFileComp
