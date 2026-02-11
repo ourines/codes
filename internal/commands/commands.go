@@ -13,6 +13,8 @@ import (
 	"strings"
 
 	"codes/internal/config"
+	mcpserver "codes/internal/mcp"
+	"codes/internal/output"
 	"codes/internal/ui"
 )
 
@@ -37,10 +39,10 @@ func RunSelect() {
 	}
 
 	fmt.Println()
-	ui.ShowHeader("Available Claude Configurations")
+	ui.ShowHeader("Available Claude Profiles")
 	fmt.Println()
 
-	for i, c := range cfg.Configs {
+	for i, c := range cfg.Profiles {
 		apiURL := c.Env["ANTHROPIC_BASE_URL"]
 		if apiURL == "" {
 			apiURL = "unknown"
@@ -83,8 +85,8 @@ func RunSelect() {
 		return
 	}
 
-	if selectedIdx, err := strconv.Atoi(selection); err == nil && selectedIdx >= 1 && selectedIdx <= len(cfg.Configs) {
-		selectedConfig := cfg.Configs[selectedIdx-1]
+	if selectedIdx, err := strconv.Atoi(selection); err == nil && selectedIdx >= 1 && selectedIdx <= len(cfg.Profiles) {
+		selectedConfig := cfg.Profiles[selectedIdx-1]
 		cfg.Default = selectedConfig.Name
 
 		// Save config
@@ -197,7 +199,7 @@ func RunAdd() {
 		configData = *cfg
 	} else {
 		// 创建新的配置
-		configData.Configs = []config.APIConfig{}
+		configData.Profiles = []config.APIConfig{}
 	}
 
 	reader := bufio.NewReader(os.Stdin)
@@ -212,7 +214,7 @@ func RunAdd() {
 	}
 
 	// 检查名称是否已存在
-	for _, c := range configData.Configs {
+	for _, c := range configData.Profiles {
 		if c.Name == name {
 			ui.ShowError("Configuration '%s' already exists", fmt.Errorf("name '%s' already exists", name))
 			return
@@ -370,10 +372,10 @@ func RunAdd() {
 	}
 
 	// 添加新配置
-	configData.Configs = append(configData.Configs, newConfig)
+	configData.Profiles = append(configData.Profiles, newConfig)
 
 	// 如果这是第一个配置，设置为默认
-	if len(configData.Configs) == 1 {
+	if len(configData.Profiles) == 1 {
 		configData.Default = name
 		ui.ShowInfo("Set '%s' as default configuration", name)
 	}
@@ -416,7 +418,7 @@ func RunClaudeWithConfig(args []string) {
 
 	// Find selected config
 	var selectedConfig config.APIConfig
-	for _, c := range cfg.Configs {
+	for _, c := range cfg.Profiles {
 		if c.Name == cfg.Default {
 			selectedConfig = c
 			break
@@ -715,7 +717,7 @@ func RunInit() {
 			testConfig.Env["ANTHROPIC_AUTH_TOKEN"] = authToken
 
 			var cfg config.Config
-			cfg.Configs = []config.APIConfig{testConfig}
+			cfg.Profiles = []config.APIConfig{testConfig}
 			cfg.Default = name
 
 			if config.TestAPIConfig(testConfig) {
@@ -726,7 +728,7 @@ func RunInit() {
 				testConfig.Status = "inactive"
 			}
 
-			cfg.Configs[0] = testConfig
+			cfg.Profiles[0] = testConfig
 
 			// Save configuration
 			if err := config.SaveConfig(&cfg); err != nil {
@@ -759,17 +761,17 @@ func RunInit() {
 			ui.ShowWarning("  Your config file may be corrupted")
 			allGood = false
 		} else {
-			if len(cfg.Configs) == 0 {
+			if len(cfg.Profiles) == 0 {
 				ui.ShowWarning("✗ No configurations found in config file")
 				ui.ShowWarning("  Run 'codes add' to add a configuration")
 				allGood = false
 			} else {
-				ui.ShowSuccess("Found %d configuration(s)", len(cfg.Configs))
+				ui.ShowSuccess("Found %d configuration(s)", len(cfg.Profiles))
 
 				// Show configurations with status
 				fmt.Println()
 				ui.ShowInfo("Configurations:")
-				for i, c := range cfg.Configs {
+				for i, c := range cfg.Profiles {
 					isDefault := ""
 					if c.Name == cfg.Default {
 						isDefault = " (default)"
@@ -826,9 +828,9 @@ func RunInit() {
 					ui.ShowInfo("Testing default configuration '%s'...", cfg.Default)
 
 					var defaultConfig *config.APIConfig
-					for i := range cfg.Configs {
-						if cfg.Configs[i].Name == cfg.Default {
-							defaultConfig = &cfg.Configs[i]
+					for i := range cfg.Profiles {
+						if cfg.Profiles[i].Name == cfg.Default {
+							defaultConfig = &cfg.Profiles[i]
 							break
 						}
 					}
@@ -1028,7 +1030,20 @@ func RunProjectRemove(name string) {
 func RunProjectList() {
 	projects, err := config.ListProjects()
 	if err != nil {
+		if output.JSONMode {
+			output.PrintError(err)
+			return
+		}
 		ui.ShowError("Failed to load projects", err)
+		return
+	}
+
+	if output.JSONMode {
+		infos := make([]config.ProjectInfo, 0, len(projects))
+		for name, path := range projects {
+			infos = append(infos, config.GetProjectInfo(name, path))
+		}
+		output.Print(infos, nil)
 		return
 	}
 
@@ -1062,36 +1077,10 @@ func runClaudeInDirectory(dir string) {
 	// 调用更新检查
 	checkForUpdates()
 
-	// Load and apply config
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		ui.ShowError("Error loading config", err)
-		os.Exit(1)
-	}
+	cmd := config.BuildClaudeCmd(dir)
 
-	// Find selected config
-	var selectedConfig config.APIConfig
-	for _, c := range cfg.Configs {
-		if c.Name == cfg.Default {
-			selectedConfig = c
-			break
-		}
-	}
-
-	// Set environment variables
-	config.SetEnvironmentVarsWithConfig(&selectedConfig)
-
-	ui.ShowInfo("Using configuration: %s", selectedConfig.Name)
 	ui.ShowInfo("Working directory: %s", dir)
 
-	// Build claude command with or without --dangerously-skip-permissions
-	var claudeArgs []string
-	if config.ShouldSkipPermissionsWithConfig(&selectedConfig, cfg) {
-		claudeArgs = []string{"--dangerously-skip-permissions"}
-	}
-
-	cmd := exec.Command("claude", claudeArgs...)
-	cmd.Dir = dir // 设置工作目录，而不是作为参数传递
 	cmd.Stdin = os.Stdin
 	cmd.Stdout = os.Stdout
 	cmd.Stderr = os.Stderr
@@ -1110,7 +1099,7 @@ func RunTest(args []string) {
 		return
 	}
 
-	if len(cfg.Configs) == 0 {
+	if len(cfg.Profiles) == 0 {
 		ui.ShowError("No configurations found", nil)
 		ui.ShowInfo("Run 'codes add' to add a configuration first")
 		return
@@ -1121,9 +1110,9 @@ func RunTest(args []string) {
 		// 测试特定配置
 		configName := args[0]
 		var targetConfig *config.APIConfig
-		for i := range cfg.Configs {
-			if cfg.Configs[i].Name == configName {
-				targetConfig = &cfg.Configs[i]
+		for i := range cfg.Profiles {
+			if cfg.Profiles[i].Name == configName {
+				targetConfig = &cfg.Profiles[i]
 				break
 			}
 		}
@@ -1137,8 +1126,8 @@ func RunTest(args []string) {
 		testSingleConfiguration(targetConfig)
 	} else {
 		// 测试所有配置
-		ui.ShowInfo("Testing all %d configurations...", len(cfg.Configs))
-		testAllConfigurations(cfg.Configs)
+		ui.ShowInfo("Testing all %d configurations...", len(cfg.Profiles))
+		testAllConfigurations(cfg.Profiles)
 	}
 }
 
@@ -1178,9 +1167,9 @@ func testSingleConfiguration(apiConfig *config.APIConfig) {
 	}
 
 	// 更新配置状态
-	for i := range cfg.Configs {
-		if cfg.Configs[i].Name == apiConfig.Name {
-			cfg.Configs[i].Status = apiConfig.Status
+	for i := range cfg.Profiles {
+		if cfg.Profiles[i].Name == apiConfig.Name {
+			cfg.Profiles[i].Status = apiConfig.Status
 			break
 		}
 	}
@@ -1248,10 +1237,10 @@ func testAllConfigurations(configs []config.APIConfig) {
 
 	// 更新所有配置状态
 	updated := false
-	for i := range cfg.Configs {
-		if newStatus, ok := statuses[cfg.Configs[i].Name]; ok {
-			if cfg.Configs[i].Status != newStatus {
-				cfg.Configs[i].Status = newStatus
+	for i := range cfg.Profiles {
+		if newStatus, ok := statuses[cfg.Profiles[i].Name]; ok {
+			if cfg.Profiles[i].Status != newStatus {
+				cfg.Profiles[i].Status = newStatus
 				updated = true
 			}
 		}
@@ -1493,4 +1482,92 @@ func RunSkipPermissionsReset() {
 	ui.ShowInfo("Previous setting: %v", oldValue)
 	ui.ShowInfo("New setting: false (default)")
 	ui.ShowInfo("Claude will now run without --dangerously-skip-permissions unless a specific configuration has it enabled.")
+}
+
+// RunServe starts the MCP server mode.
+func RunServe() {
+	if err := mcpserver.RunServer(); err != nil {
+		// EOF is expected when client disconnects
+		if err.Error() != "server is closing: EOF" {
+			ui.ShowError("MCP server error", err)
+			os.Exit(1)
+		}
+	}
+}
+
+// RunTerminalSet sets the terminal emulator preference.
+func RunTerminalSet(terminal string) {
+	old := config.GetTerminal()
+	if old == "" {
+		old = "terminal"
+	}
+
+	if err := config.SetTerminal(terminal); err != nil {
+		ui.ShowError("Error saving config", err)
+		return
+	}
+
+	ui.ShowSuccess("Terminal set to: %s", terminal)
+	fmt.Println()
+	ui.ShowInfo("Previous: %s", old)
+	ui.ShowInfo("New: %s", terminal)
+	fmt.Println()
+
+	switch terminal {
+	case "terminal":
+		ui.ShowInfo("Sessions will open in Terminal.app")
+	case "iterm", "iterm2":
+		ui.ShowInfo("Sessions will open in iTerm2")
+	case "warp":
+		ui.ShowInfo("Sessions will open in Warp")
+	default:
+		ui.ShowInfo("Sessions will open with: %s", terminal)
+	}
+}
+
+// RunTerminalGet shows the current terminal emulator setting.
+func RunTerminalGet() {
+	current := config.GetTerminal()
+	if current == "" {
+		current = "terminal"
+	}
+
+	fmt.Println("Current terminal emulator:")
+	ui.ShowInfo("  %s", current)
+	fmt.Println()
+	ui.ShowInfo("To change: codes terminal set <terminal>")
+	ui.ShowInfo("To list options: codes terminal list")
+}
+
+// RunTerminalList lists available terminal emulator options.
+func RunTerminalList() {
+	current := config.GetTerminal()
+	if current == "" {
+		current = "terminal"
+	}
+
+	fmt.Println("Available terminal emulators:")
+	fmt.Println()
+
+	options := []struct {
+		name string
+		desc string
+	}{
+		{"terminal", "macOS Terminal.app (default)"},
+		{"iterm", "iTerm2"},
+		{"warp", "Warp"},
+	}
+
+	for _, opt := range options {
+		marker := "  "
+		if opt.name == current {
+			marker = "► "
+		}
+		ui.ShowInfo("%s%-10s %s", marker, opt.name, opt.desc)
+	}
+
+	fmt.Println()
+	ui.ShowInfo("You can also use any custom terminal command:")
+	ui.ShowInfo("  codes terminal set Alacritty")
+	ui.ShowInfo("  codes terminal set /usr/bin/xterm")
 }

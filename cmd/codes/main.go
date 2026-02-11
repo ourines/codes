@@ -5,9 +5,14 @@ import (
 	"os/exec"
 
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 
 	"codes/internal/commands"
+	"codes/internal/output"
+	"codes/internal/tui"
 )
+
+var jsonFlag bool
 
 var rootCmd = &cobra.Command{
 	Use:   "codes",
@@ -16,6 +21,8 @@ var rootCmd = &cobra.Command{
 }
 
 func init() {
+	rootCmd.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
+
 	rootCmd.AddCommand(commands.InitCmd)
 	rootCmd.AddCommand(commands.AddCmd)
 	rootCmd.AddCommand(commands.SelectCmd)
@@ -28,20 +35,43 @@ func init() {
 	rootCmd.AddCommand(commands.DefaultBehaviorCmd)
 	rootCmd.AddCommand(commands.SkipPermissionsCmd)
 	rootCmd.AddCommand(commands.CompletionCmd)
+	rootCmd.AddCommand(commands.ServeCmd)
+	rootCmd.AddCommand(commands.TerminalCmd)
 
-	// 设置默认运行时行为 - 现在使用智能启动
+	// 设置默认运行时行为
 	rootCmd.Run = func(cmd *cobra.Command, args []string) {
-		// Check if claude is installed
+		// Set JSON mode from flag
+		output.JSONMode = jsonFlag
+
+		// If --json flag, output project list in JSON
+		if jsonFlag {
+			commands.RunProjectList()
+			return
+		}
+
+		// If stdin is a TTY, launch TUI (sessions managed inside TUI)
+		if term.IsTerminal(int(os.Stdin.Fd())) {
+			if err := tui.Run(); err != nil {
+				os.Exit(1)
+			}
+			return
+		}
+
+		// Non-TTY fallback: original behavior
 		if _, err := exec.LookPath("claude"); err != nil {
 			commands.RunClaudeWithConfig([]string{})
 			return
 		}
-		// 使用 start 命令的逻辑，支持目录记忆
 		commands.RunStart(args)
 	}
 }
 
 func main() {
+	// Propagate --json flag before execution
+	rootCmd.PersistentPreRun = func(cmd *cobra.Command, args []string) {
+		output.JSONMode = jsonFlag
+	}
+
 	if err := rootCmd.Execute(); err != nil {
 		os.Exit(1)
 	}
