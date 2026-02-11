@@ -6,17 +6,20 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 )
 
 type Config struct {
-	Configs         []APIConfig       `json:"configs"`
+	Profiles        []APIConfig       `json:"profiles"`
 	Default         string            `json:"default"`
 	SkipPermissions bool              `json:"skipPermissions,omitempty"` // 全局是否跳过权限检查
 	Projects        map[string]string `json:"projects,omitempty"`        // 项目别名 -> 目录路径
 	LastWorkDir     string            `json:"lastWorkDir,omitempty"`     // 上次工作目录
 	DefaultBehavior string            `json:"defaultBehavior,omitempty"` // 默认启动行为: "current", "last", "home"
+	Terminal        string            `json:"terminal,omitempty"`        // 终端模拟器: "terminal", "iterm", "warp", 或自定义命令
 }
 
 type APIConfig struct {
@@ -58,6 +61,30 @@ func (a *APIConfig) UnmarshalJSON(data []byte) error {
 		if _, exists := a.Env["ANTHROPIC_AUTH_TOKEN"]; !exists {
 			a.Env["ANTHROPIC_AUTH_TOKEN"] = aux.AnthropicAuthToken
 		}
+	}
+
+	return nil
+}
+
+// UnmarshalJSON implements custom JSON unmarshaling for Config to support
+// backward compatibility with the old "configs" field name.
+func (c *Config) UnmarshalJSON(data []byte) error {
+	type Alias Config
+	aux := &struct {
+		*Alias
+		// Legacy field name
+		Configs []APIConfig `json:"configs"`
+	}{
+		Alias: (*Alias)(c),
+	}
+
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+
+	// Migrate legacy "configs" field into "profiles"
+	if len(c.Profiles) == 0 && len(aux.Configs) > 0 {
+		c.Profiles = aux.Configs
 	}
 
 	return nil
@@ -368,6 +395,82 @@ func SetEnvironmentVarsWithConfig(apiConfig *APIConfig) {
 	}
 }
 
+// BuildClaudeCmd creates an *exec.Cmd for launching Claude Code in the given directory.
+// It loads the current config, sets environment variables, and applies skip-permissions if configured.
+func BuildClaudeCmd(dir string) *exec.Cmd {
+	cfg, _ := LoadConfig()
+
+	var selected APIConfig
+	if cfg != nil {
+		for _, c := range cfg.Profiles {
+			if c.Name == cfg.Default {
+				selected = c
+				break
+			}
+		}
+	}
+
+	SetEnvironmentVarsWithConfig(&selected)
+
+	var args []string
+	if ShouldSkipPermissionsWithConfig(&selected, cfg) {
+		args = []string{"--dangerously-skip-permissions"}
+	}
+
+	cmd := exec.Command("claude", args...)
+	cmd.Dir = dir
+	return cmd
+}
+
+// ClaudeCmdSpec returns the command arguments and environment variables for launching
+// Claude Code without modifying the current process environment.
+func ClaudeCmdSpec() (args []string, env map[string]string) {
+	cfg, _ := LoadConfig()
+
+	var selected APIConfig
+	if cfg != nil {
+		for _, c := range cfg.Profiles {
+			if c.Name == cfg.Default {
+				selected = c
+				break
+			}
+		}
+	}
+
+	env = GetEnvironmentVars(&selected)
+
+	if ShouldSkipPermissionsWithConfig(&selected, cfg) {
+		args = []string{"--dangerously-skip-permissions"}
+	}
+
+	return args, env
+}
+
+// GetTerminal returns the configured terminal emulator name.
+// Returns empty string if not configured (uses platform default).
+func GetTerminal() string {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return cfg.Terminal
+}
+
+// SetTerminal saves the terminal emulator preference.
+func SetTerminal(terminal string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.Terminal = terminal
+	return SaveConfig(cfg)
+}
+
+// TerminalOptions returns the list of known terminal emulator options.
+func TerminalOptions() []string {
+	return []string{"terminal", "iterm", "warp"}
+}
+
 // GetDefaultEnvironmentVars 获取默认的环境变量提示
 func GetDefaultEnvironmentVars() map[string]string {
 	return map[string]string{
@@ -405,4 +508,83 @@ func GetDefaultBehavior() string {
 
 	// 无效值，回退到默认
 	return "current"
+}
+
+// ProjectInfo holds detailed information about a registered project.
+type ProjectInfo struct {
+	Name           string   `json:"name"`
+	Path           string   `json:"path"`
+	Exists         bool     `json:"exists"`
+	GitBranch      string   `json:"gitBranch,omitempty"`
+	GitDirty       bool     `json:"gitDirty"`
+	HasClaudeMD    bool     `json:"hasClaudeMd"`
+	RecentBranches []string `json:"recentBranches,omitempty"`
+}
+
+// GetProjectInfo aggregates project metadata including git status and file checks.
+func GetProjectInfo(name, path string) ProjectInfo {
+	info := ProjectInfo{
+		Name: name,
+		Path: path,
+	}
+
+	if _, err := os.Stat(path); err != nil {
+		return info
+	}
+	info.Exists = true
+
+	info.GitBranch = getGitBranch(path)
+	info.GitDirty = isGitDirty(path)
+	info.HasClaudeMD = hasClaudeMD(path)
+	info.RecentBranches = getRecentGitBranches(path, 5)
+
+	return info
+}
+
+func getGitBranch(dir string) string {
+	cmd := exec.Command("git", "branch", "--show-current")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
+}
+
+func isGitDirty(dir string) bool {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return false
+	}
+	return len(strings.TrimSpace(string(out))) > 0
+}
+
+func getRecentGitBranches(dir string, n int) []string {
+	cmd := exec.Command("git", "branch", "--sort=-committerdate", "--format=%(refname:short)")
+	cmd.Dir = dir
+	out, err := cmd.Output()
+	if err != nil {
+		return nil
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) == 0 || (len(lines) == 1 && lines[0] == "") {
+		return nil
+	}
+	if len(lines) > n {
+		lines = lines[:n]
+	}
+	return lines
+}
+
+func hasClaudeMD(dir string) bool {
+	if _, err := os.Stat(filepath.Join(dir, "CLAUDE.md")); err == nil {
+		return true
+	}
+	if _, err := os.Stat(filepath.Join(dir, ".claude", "CLAUDE.md")); err == nil {
+		return true
+	}
+	return false
 }
