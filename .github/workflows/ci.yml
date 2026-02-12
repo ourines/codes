@@ -26,6 +26,12 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
+    - name: Vet
+      run: go vet ./...
+
+    - name: Unit tests
+      run: go test ./... -v -count=1
+
     - name: Build (Unix)
       if: runner.os != 'Windows'
       run: go build -o codes ./cmd/codes
@@ -34,28 +40,18 @@ jobs:
       if: runner.os == 'Windows'
       run: go build -o codes.exe ./cmd/codes
 
-    - name: Test basic functionality (Unix)
+    - name: Smoke test (Unix)
       if: runner.os != 'Windows'
       run: |
         ./codes version
         ./codes --help
+        ./codes add --help
+        ./codes terminal list
 
-    - name: Test basic functionality (Windows)
+    - name: Smoke test (Windows)
       if: runner.os == 'Windows'
       run: |
         .\codes.exe version
         .\codes.exe --help
-
-    - name: Test configuration (Unix)
-      if: runner.os != 'Windows'
-      run: |
-        ./codes add --help
-        ./codes select --help
-        ./codes completion --help
-
-    - name: Test configuration (Windows)
-      if: runner.os == 'Windows'
-      run: |
         .\codes.exe add --help
-        .\codes.exe select --help
-        .\codes.exe completion --help
+        .\codes.exe terminal list
