@@ -1,14 +1,17 @@
 package tui
 
-import "github.com/charmbracelet/lipgloss"
+import (
+	"github.com/charmbracelet/bubbles/list"
+	"github.com/charmbracelet/lipgloss"
+)
 
 var (
-	// Colors
-	primaryColor   = lipgloss.Color("#7C3AED") // purple
-	secondaryColor = lipgloss.Color("#10B981") // green
+	// Colors — low-saturation palette, easy on the eyes
+	primaryColor   = lipgloss.Color("#7B9DB7") // dusty steel blue
+	secondaryColor = lipgloss.Color("#8AAF9D") // dusty sage
 	mutedColor     = lipgloss.Color("#6B7280") // gray
-	dangerColor    = lipgloss.Color("#EF4444") // red
-	warnColor      = lipgloss.Color("#F59E0B") // yellow
+	dangerColor    = lipgloss.Color("#C08A83") // dusty rose
+	warnColor      = lipgloss.Color("#C4AD88") // warm sand
 
 	// App frame
 	appStyle = lipgloss.NewStyle().Padding(1, 2)
@@ -16,7 +19,7 @@ var (
 	// Title bar
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color("#FFFFFF")).
+			Foreground(lipgloss.Color("#E8E4E0")).
 			Background(primaryColor).
 			Padding(0, 1)
 
@@ -41,7 +44,7 @@ var (
 				Foreground(primaryColor)
 
 	detailValueStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("#E5E7EB"))
+				Foreground(lipgloss.Color("#C8CCD0"))
 
 	// Status indicators
 	statusOkStyle = lipgloss.NewStyle().
@@ -72,3 +75,16 @@ var (
 			Foreground(mutedColor).
 			Italic(true)
 )
+
+// newStyledDelegate returns a list delegate with colors matching our palette.
+func newStyledDelegate() list.DefaultDelegate {
+	d := list.NewDefaultDelegate()
+	d.SetSpacing(0)
+	d.Styles.SelectedTitle = d.Styles.SelectedTitle.
+		Foreground(primaryColor).
+		BorderLeftForeground(primaryColor)
+	d.Styles.SelectedDesc = d.Styles.SelectedDesc.
+		Foreground(mutedColor).
+		BorderLeftForeground(primaryColor)
+	return d
+}

@@ -16,20 +16,37 @@ type profileItem struct {
 }
 
 func (i profileItem) Title() string {
+	name := i.cfg.Name
 	if i.isDefault {
-		return i.cfg.Name + " ★"
+		name += " ★"
 	}
-	return i.cfg.Name
+	return name
 }
 
 func (i profileItem) Description() string {
-	if i.cfg.Status != "" {
-		return i.cfg.Status
+	var parts []string
+	status := i.cfg.Status
+	if status == "" {
+		status = "unknown"
 	}
-	return "unknown"
+	switch status {
+	case "active":
+		parts = append(parts, "● active")
+	case "inactive":
+		parts = append(parts, "○ inactive")
+	default:
+		parts = append(parts, "? "+status)
+	}
+	parts = append(parts, fmt.Sprintf("%d env", len(i.cfg.Env)))
+	if i.cfg.SkipPermissions != nil && *i.cfg.SkipPermissions {
+		parts = append(parts, "skip-perms")
+	}
+	return strings.Join(parts, "  ")
 }
 
-func (i profileItem) FilterValue() string { return i.cfg.Name }
+func (i profileItem) FilterValue() string {
+	return i.cfg.Name + " " + i.cfg.Status
+}
 
 // loadProfiles loads all API profiles and returns them as list items
 // along with the default profile name.

@@ -17,8 +17,14 @@ type remoteItem struct {
 }
 
 func (i remoteItem) Title() string       { return i.host.Name }
-func (i remoteItem) Description() string { return i.host.UserAtHost() }
-func (i remoteItem) FilterValue() string { return i.host.Name }
+func (i remoteItem) Description() string {
+	desc := i.host.UserAtHost()
+	if i.host.Port != 0 && i.host.Port != 22 {
+		desc += fmt.Sprintf(":%d", i.host.Port)
+	}
+	return desc
+}
+func (i remoteItem) FilterValue() string { return i.host.Name + " " + i.host.UserAtHost() }
 
 // loadRemotes returns a list of remote hosts as list.Item.
 func loadRemotes() []list.Item {

@@ -23,6 +23,7 @@ type Config struct {
 	Remotes         []RemoteHost      `json:"remotes,omitempty"`         // 远程 SSH 主机
 	ProjectsDir     string            `json:"projects_dir,omitempty"`    // git clone 默认目标目录
 	AutoUpdate      string            `json:"auto_update,omitempty"`     // 自动更新模式: "notify", "silent", "off"
+	Editor          string            `json:"editor,omitempty"`          // 编辑器命令: "code", "cursor", "zed", etc.
 }
 
 // RemoteHost represents a remote SSH host configuration.
@@ -530,6 +531,25 @@ func SetTerminal(terminal string) error {
 		return err
 	}
 	cfg.Terminal = terminal
+	return SaveConfig(cfg)
+}
+
+// GetEditor returns the configured editor command.
+func GetEditor() string {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return ""
+	}
+	return cfg.Editor
+}
+
+// SetEditor saves the editor command to config.
+func SetEditor(editor string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.Editor = editor
 	return SaveConfig(cfg)
 }
 

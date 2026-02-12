@@ -2,7 +2,9 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 	"time"
 
@@ -59,6 +61,18 @@ type Model struct {
 
 // projectDeletedMsg is sent after deleting a project.
 type projectDeletedMsg struct{ name string }
+
+// editorOpenedMsg is sent after attempting to open a project in an editor.
+type editorOpenedMsg struct {
+	name string
+	err  error
+}
+
+// browserOpenedMsg is sent after attempting to open a URL in the browser.
+type browserOpenedMsg struct {
+	url string
+	err error
+}
 
 // profileSwitchedMsg is sent after switching the default profile.
 type profileSwitchedMsg struct{ name string }
@@ -120,32 +134,32 @@ func remoteStatusTick() tea.Cmd {
 func NewModel() Model {
 	// Load projects
 	projectItems := loadProjects()
-	projectDelegate := list.NewDefaultDelegate()
+	projectDelegate := newStyledDelegate()
 	projectDelegate.ShowDescription = true
 	pl := list.New(projectItems, projectDelegate, 0, 0)
 	pl.SetShowTitle(false)
 	pl.SetShowHelp(false)
-	pl.SetShowStatusBar(true)
+	pl.SetShowStatusBar(false)
 	pl.SetFilteringEnabled(true)
 
 	// Load profiles
 	profileItems, _ := loadProfiles()
-	profileDelegate := list.NewDefaultDelegate()
+	profileDelegate := newStyledDelegate()
 	profileDelegate.ShowDescription = true
 	cl := list.New(profileItems, profileDelegate, 0, 0)
 	cl.SetShowTitle(false)
 	cl.SetShowHelp(false)
-	cl.SetShowStatusBar(true)
+	cl.SetShowStatusBar(false)
 	cl.SetFilteringEnabled(true)
 
 	// Load remotes
 	remoteItems := loadRemotes()
-	remoteDelegate := list.NewDefaultDelegate()
+	remoteDelegate := newStyledDelegate()
 	remoteDelegate.ShowDescription = true
 	rl := list.New(remoteItems, remoteDelegate, 0, 0)
 	rl.SetShowTitle(false)
 	rl.SetShowHelp(false)
-	rl.SetShowStatusBar(true)
+	rl.SetShowStatusBar(false)
 	rl.SetFilteringEnabled(true)
 
 	cfg, _ := config.LoadConfig()
@@ -177,9 +191,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		innerWidth := m.width - 4
 		innerHeight := m.height - 2
 
-		// Calculate list dimensions (left panel takes ~50% of inner width)
+		// Overhead within inner area: header(1) + gap(1) + help(2) + status(1) = 5
+		listHeight := innerHeight - 5
 		listWidth := innerWidth / 2
-		listHeight := innerHeight - 6 // leave room for header + footer + help
 		m.projectList.SetSize(listWidth, listHeight)
 		m.profileList.SetSize(listWidth, listHeight)
 		m.remoteList.SetSize(listWidth, listHeight)
@@ -332,11 +346,69 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 
-		case msg.String() == "k" && m.state == viewProjects:
+		case msg.String() == "x" && m.state == viewProjects:
 			if item, ok := m.projectList.SelectedItem().(projectItem); ok {
 				m.sessionMgr.KillByProject(item.info.Name)
 			}
 			return m, nil
+
+		case msg.String() == "e" && m.state == viewProjects:
+			if item, ok := m.projectList.SelectedItem().(projectItem); ok {
+				if !item.info.Exists {
+					return m, nil
+				}
+				if item.info.Remote != "" {
+					m.err = "cannot open remote project in local editor"
+					return m, nil
+				}
+				path := item.info.Path
+				name := item.info.Name
+				return m, func() tea.Msg {
+					editor := detectEditor()
+					if editor == "" {
+						return editorOpenedMsg{err: fmt.Errorf("no editor found; set one with: codes config set editor <cmd>")}
+					}
+					cmd := exec.Command(editor, path)
+					err := cmd.Start()
+					return editorOpenedMsg{name: name, err: err}
+				}
+			}
+
+		case msg.String() == "g" && m.state == viewProjects:
+			if item, ok := m.projectList.SelectedItem().(projectItem); ok {
+				if !item.info.Exists {
+					return m, nil
+				}
+				path := item.info.Path
+				remoteName := item.info.Remote
+				return m, func() tea.Msg {
+					var gitURL string
+					if remoteName != "" {
+						host, ok := config.GetRemote(remoteName)
+						if !ok {
+							return browserOpenedMsg{err: fmt.Errorf("remote '%s' not found", remoteName)}
+						}
+						out, err := remote.RunSSH(host, fmt.Sprintf("git -C %q remote get-url origin", path))
+						if err != nil {
+							return browserOpenedMsg{err: fmt.Errorf("no remote origin on %s", remoteName)}
+						}
+						gitURL = strings.TrimSpace(out)
+					} else {
+						cmd := exec.Command("git", "-C", path, "remote", "get-url", "origin")
+						out, err := cmd.Output()
+						if err != nil {
+							return browserOpenedMsg{err: fmt.Errorf("not a git repo or no remote origin")}
+						}
+						gitURL = strings.TrimSpace(string(out))
+					}
+					browserURL := gitURLToBrowserURL(gitURL)
+					if browserURL == "" {
+						return browserOpenedMsg{err: fmt.Errorf("could not parse remote URL: %s", gitURL)}
+					}
+					err := openBrowser(browserURL)
+					return browserOpenedMsg{url: browserURL, err: err}
+				}
+			}
 
 		case msg.String() == "t" && m.state == viewProjects:
 			// Cycle terminal: terminal → iterm → warp → terminal
@@ -409,6 +481,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewProjects
 		return m, nil
 
+	case editorOpenedMsg:
+		if msg.err != nil {
+			m.err = msg.err.Error()
+		} else {
+			m.statusMsg = fmt.Sprintf("opened %s in editor", msg.name)
+		}
+		return m, nil
+
+	case browserOpenedMsg:
+		if msg.err != nil {
+			m.err = msg.err.Error()
+		} else {
+			m.statusMsg = fmt.Sprintf("opened %s", msg.url)
+		}
+		return m, nil
+
 	case sessionTickMsg:
 		m.sessionMgr.RefreshStatus()
 		return m, sessionTick()
@@ -475,25 +563,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		return m, func() tea.Msg {
 			if remoteName != "" {
-				// Remote clone
-				host, ok := config.GetRemote(remoteName)
-				if !ok {
-					return gitCloneMsg{err: fmt.Errorf("remote '%s' not found", remoteName)}
-				}
-				_, err := remote.RunSSH(host, fmt.Sprintf("git clone %q %q", gitURL, clonePath))
-				return gitCloneMsg{name: name, path: clonePath, remote: remoteName, err: err}
+				return cloneRemote(remoteName, gitURL, clonePath, name)
 			}
-			// Local clone
-			cmd := exec.Command("git", "clone", gitURL, clonePath)
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				detail := strings.TrimSpace(string(out))
-				if detail != "" {
-					return gitCloneMsg{err: fmt.Errorf("git clone failed:\n%s", detail)}
-				}
-				return gitCloneMsg{err: fmt.Errorf("git clone: %w", err)}
-			}
-			return gitCloneMsg{name: name, path: clonePath}
+			return cloneLocal(gitURL, clonePath, name)
 		}
 
 	case gitCloneMsg:
@@ -753,7 +825,7 @@ func (m Model) updateRightPanel(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 
-		case "k":
+		case "x":
 			// Kill the selected session
 			if item, ok := m.projectList.SelectedItem().(projectItem); ok {
 				running := m.sessionMgr.GetRunningByProject(item.info.Name)
@@ -822,7 +894,7 @@ func (m Model) View() string {
 	// Header
 	header := m.renderHeader()
 	b.WriteString(header)
-	b.WriteString("\n\n")
+	b.WriteString("\n")
 
 	if m.state == viewAddForm {
 		b.WriteString(m.addForm.View())
@@ -832,13 +904,13 @@ func (m Model) View() string {
 		b.WriteString(m.remoteForm.View())
 	} else if m.state == viewSettings {
 		// Settings uses full width, no left/right split
-		contentHeight := m.height - 10
+		contentHeight := m.height - 7
 		b.WriteString(m.settings.View(innerWidth, contentHeight))
 	} else {
 		// Main content: left list + right detail
 		leftWidth := innerWidth / 2
 		rightWidth := innerWidth - leftWidth - 2
-		contentHeight := m.height - 10 // header + footer + appStyle padding
+		contentHeight := m.height - 7 // appStyle(2) + header(1) + gap(1) + help(2) + status(1)
 
 		var leftPanel, rightPanel string
 
@@ -942,17 +1014,17 @@ func (m Model) renderHelp() string {
 		return formHintStyle.Render("↑↓ select  Enter/Space cycle  tab switch  q quit")
 	}
 	if m.focus == focusRight && m.state == viewProjects {
-		return formHintStyle.Render("↑↓ select  Enter open  k kill  ← back  q quit")
+		return formHintStyle.Render("↑↓/jk select  Enter open  x kill  ← back  q quit")
 	}
 
 	parts := []string{
-		"↑↓ select",
+		"jk/↑↓ select",
 		"enter open",
 		"/ filter",
 	}
 
 	if m.state == viewProjects {
-		parts = append(parts, "→ sessions", "a add", "d delete", "k kill", "t terminal")
+		parts = append(parts, "→/l sessions", "a add", "d delete", "x kill", "e editor", "g github", "t terminal")
 	}
 	if m.state == viewProfiles {
 		parts = append(parts, "a add profile")
@@ -972,4 +1044,155 @@ func Run() error {
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
+}
+
+// cloneLocal tries to clone a git repo locally with smart fallback:
+// 1. Try gh repo clone (if gh CLI available)
+// 2. Try git clone with original URL
+// 3. If HTTPS URL failed, retry with SSH URL
+// 4. Return guidance on failure
+func cloneLocal(gitURL, clonePath, name string) tea.Msg {
+	hasGH := false
+	if _, err := exec.LookPath("gh"); err == nil {
+		hasGH = true
+	}
+
+	// Step 1: Try gh repo clone
+	if hasGH {
+		cmd := exec.Command("gh", "repo", "clone", gitURL, clonePath)
+		if out, err := cmd.CombinedOutput(); err == nil {
+			return gitCloneMsg{name: name, path: clonePath}
+		} else {
+			_ = out // gh failed, continue to git clone
+		}
+	}
+
+	// Step 2: Try git clone with original URL
+	cmd := exec.Command("git", "clone", gitURL, clonePath)
+	out, err := cmd.CombinedOutput()
+	if err == nil {
+		return gitCloneMsg{name: name, path: clonePath}
+	}
+
+	// Step 3: If HTTPS URL failed, try SSH URL
+	if isHTTPSURL(gitURL) {
+		sshURL := httpsToSSH(gitURL)
+		cmd2 := exec.Command("git", "clone", sshURL, clonePath)
+		if out2, err2 := cmd2.CombinedOutput(); err2 == nil {
+			return gitCloneMsg{name: name, path: clonePath}
+		} else {
+			_ = out2
+		}
+	}
+
+	// Step 4: All failed — return guidance
+	detail := strings.TrimSpace(string(out))
+	var guidance string
+	if hasGH {
+		guidance = "Clone failed. To clone private repositories:\n" +
+			"  • GitHub CLI: gh auth login\n" +
+			"  • SSH key:   ssh-keygen -t ed25519 && ssh-add\n" +
+			"  • HTTPS:     git config --global credential.helper store"
+	} else {
+		guidance = "Clone failed. To clone private repositories:\n" +
+			"  • Install GitHub CLI (gh) for easy auth: https://cli.github.com\n" +
+			"  • SSH key:   ssh-keygen -t ed25519 && ssh-add\n" +
+			"  • HTTPS:     git config --global credential.helper store"
+	}
+	if detail != "" {
+		return gitCloneMsg{err: fmt.Errorf("%s\n\n%s", detail, guidance)}
+	}
+	return gitCloneMsg{err: fmt.Errorf("%s", guidance)}
+}
+
+// cloneRemote tries to clone a git repo on a remote host with smart fallback:
+// 1. Try git clone with SSH agent forwarding (-A)
+// 2. If HTTPS URL failed, retry with SSH URL (still with -A)
+// 3. Return guidance on failure
+func cloneRemote(remoteName, gitURL, clonePath, name string) tea.Msg {
+	host, ok := config.GetRemote(remoteName)
+	if !ok {
+		return gitCloneMsg{err: fmt.Errorf("remote '%s' not found", remoteName)}
+	}
+
+	// Step 1: Try git clone with agent forwarding
+	_, err := remote.RunSSHWithAgent(host, fmt.Sprintf("git clone %q %q", gitURL, clonePath))
+	if err == nil {
+		return gitCloneMsg{name: name, path: clonePath, remote: remoteName}
+	}
+	firstErr := err
+
+	// Step 2: If HTTPS URL failed, try SSH URL
+	if isHTTPSURL(gitURL) {
+		sshURL := httpsToSSH(gitURL)
+		_, err2 := remote.RunSSHWithAgent(host, fmt.Sprintf("git clone %q %q", sshURL, clonePath))
+		if err2 == nil {
+			return gitCloneMsg{name: name, path: clonePath, remote: remoteName}
+		}
+	}
+
+	// Step 3: All failed — return guidance
+	guidance := fmt.Sprintf("Clone failed on remote. To clone private repositories on %s:\n"+
+		"  • Forward SSH agent: ensure ssh-agent is running locally (ssh-add -l)\n"+
+		"  • Or set up SSH key on remote: codes remote ssh %s, then ssh-keygen",
+		host.UserAtHost(), remoteName)
+	return gitCloneMsg{err: fmt.Errorf("%v\n\n%s", firstErr, guidance)}
+}
+
+// detectEditor returns the editor command to use, checking:
+// 1. Config setting  2. $VISUAL  3. $EDITOR  4. Auto-detect from PATH
+func detectEditor() string {
+	if e := config.GetEditor(); e != "" {
+		return e
+	}
+	if e := os.Getenv("VISUAL"); e != "" {
+		return e
+	}
+	if e := os.Getenv("EDITOR"); e != "" {
+		return e
+	}
+	for _, candidate := range []string{"cursor", "code", "zed", "subl", "nvim", "vim"} {
+		if _, err := exec.LookPath(candidate); err == nil {
+			return candidate
+		}
+	}
+	return ""
+}
+
+// gitURLToBrowserURL converts a git remote URL to a browser-friendly HTTPS URL.
+func gitURLToBrowserURL(gitURL string) string {
+	gitURL = strings.TrimSpace(gitURL)
+	// git@github.com:user/repo.git → https://github.com/user/repo
+	if strings.HasPrefix(gitURL, "git@") {
+		gitURL = strings.TrimPrefix(gitURL, "git@")
+		gitURL = strings.Replace(gitURL, ":", "/", 1)
+		gitURL = strings.TrimSuffix(gitURL, ".git")
+		return "https://" + gitURL
+	}
+	// ssh://git@github.com/user/repo.git → https://github.com/user/repo
+	if strings.HasPrefix(gitURL, "ssh://") {
+		gitURL = strings.TrimPrefix(gitURL, "ssh://")
+		gitURL = strings.TrimPrefix(gitURL, "git@")
+		gitURL = strings.TrimSuffix(gitURL, ".git")
+		return "https://" + gitURL
+	}
+	// https://github.com/user/repo.git → https://github.com/user/repo
+	if strings.HasPrefix(gitURL, "https://") || strings.HasPrefix(gitURL, "http://") {
+		return strings.TrimSuffix(gitURL, ".git")
+	}
+	return ""
+}
+
+// openBrowser opens a URL in the default browser.
+func openBrowser(url string) error {
+	switch runtime.GOOS {
+	case "darwin":
+		return exec.Command("open", url).Start()
+	case "linux":
+		return exec.Command("xdg-open", url).Start()
+	case "windows":
+		return exec.Command("cmd", "/c", "start", url).Start()
+	default:
+		return fmt.Errorf("unsupported platform")
+	}
 }
