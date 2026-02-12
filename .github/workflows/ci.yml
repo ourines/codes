@@ -45,13 +45,13 @@ jobs:
       run: |
         ./codes version
         ./codes --help
-        ./codes add --help
-        ./codes terminal list
+        ./codes profile add --help
+        ./codes config list terminal
 
     - name: Smoke test (Windows)
       if: runner.os == 'Windows'
       run: |
         .\codes.exe version
         .\codes.exe --help
-        .\codes.exe add --help
-        .\codes.exe terminal list
+        .\codes.exe profile add --help
+        .\codes.exe config list terminal

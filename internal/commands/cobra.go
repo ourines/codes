@@ -5,7 +5,6 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -28,7 +27,15 @@ func init() {
 	InitCmd.Flags().BoolP("yes", "y", false, "Auto-accept all prompts (for non-interactive use)")
 }
 
-// AddCmd represents the add command
+// ProfileCmd represents the profile parent command
+var ProfileCmd = &cobra.Command{
+	Use:     "profile",
+	Aliases: []string{"pf"},
+	Short:   "Manage API profiles",
+	Long:    "Add, select, test, list, or remove API profiles",
+}
+
+// AddCmd represents the profile add command
 var AddCmd = &cobra.Command{
 	Use:   "add",
 	Short: "Add a new Claude configuration",
@@ -38,7 +45,7 @@ var AddCmd = &cobra.Command{
 	},
 }
 
-// SelectCmd represents the select command
+// SelectCmd represents the profile select command
 var SelectCmd = &cobra.Command{
 	Use:   "select",
 	Short: "Select Claude configuration",
@@ -48,15 +55,37 @@ var SelectCmd = &cobra.Command{
 	},
 }
 
-// TestCmd represents the test command
+// TestCmd represents the profile test command
 var TestCmd = &cobra.Command{
-	Use:   "test [config-name]",
-	Short: "Test API configuration",
-	Long:  "Test API connectivity for all configurations or a specific one",
-	Args:  cobra.MaximumNArgs(1),
+	Use:               "test [config-name]",
+	Short:             "Test API configuration",
+	Long:              "Test API connectivity for all configurations or a specific one",
+	Args:              cobra.MaximumNArgs(1),
 	ValidArgsFunction: completeProfileNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		RunTest(args)
+	},
+}
+
+// ProfileListCmd represents the profile list command
+var ProfileListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List all profiles",
+	Long:  "List all configured API profiles and their status",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunProfileList()
+	},
+}
+
+// ProfileRemoveCmd represents the profile remove command
+var ProfileRemoveCmd = &cobra.Command{
+	Use:               "remove <name>",
+	Short:             "Remove a profile",
+	Long:              "Remove an API profile by name",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeProfileNames,
+	Run: func(cmd *cobra.Command, args []string) {
+		RunProfileRemove(args[0])
 	},
 }
 
@@ -97,9 +126,10 @@ var RunCmd = &cobra.Command{
 
 // StartCmd represents the start command
 var StartCmd = &cobra.Command{
-	Use:   "start [path-or-project-name]",
-	Short: "Start Claude in a specific directory",
-	Long:  "Start Claude Code in a specific directory, project alias, or last used directory",
+	Use:               "start [path-or-project-name]",
+	Aliases:           []string{"s"},
+	Short:             "Start Claude in a specific directory",
+	Long:              "Start Claude Code in a specific directory, project alias, or last used directory",
 	ValidArgsFunction: completeProjectNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		RunStart(args)
@@ -108,30 +138,42 @@ var StartCmd = &cobra.Command{
 
 // ProjectCmd represents the project command
 var ProjectCmd = &cobra.Command{
-	Use:   "project",
-	Short: "Manage project aliases",
-	Long:  "Add, remove, or list project aliases for quick access",
+	Use:     "project",
+	Aliases: []string{"p"},
+	Short:   "Manage project aliases",
+	Long:    "Add, remove, or list project aliases for quick access",
 }
 
 // ConfigCmd represents the config command
 var ConfigCmd = &cobra.Command{
-	Use:   "config",
-	Short: "Manage configuration",
-	Long:  "Configure codes CLI settings",
+	Use:     "config",
+	Aliases: []string{"c"},
+	Short:   "Manage configuration",
+	Long:    "Configure codes CLI settings (default-behavior, skip-permissions, terminal)",
 }
 
 // ConfigSetCmd represents the config set command
 var ConfigSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a configuration value",
-	Long:  "Set a configuration value (keys: defaultBehavior)",
+	Long:  "Set a configuration value (keys: default-behavior, skip-permissions, terminal)",
 	Args:  cobra.ExactArgs(2),
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
-			return []string{"defaultBehavior"}, cobra.ShellCompDirectiveNoFileComp
+			return []string{"default-behavior", "skip-permissions", "terminal"}, cobra.ShellCompDirectiveNoFileComp
 		}
-		if len(args) == 1 && args[0] == "defaultBehavior" {
-			return []string{"current", "last", "home"}, cobra.ShellCompDirectiveNoFileComp
+		if len(args) == 1 {
+			switch args[0] {
+			case "default-behavior":
+				return []string{"current", "last", "home"}, cobra.ShellCompDirectiveNoFileComp
+			case "skip-permissions":
+				return []string{"true", "false"}, cobra.ShellCompDirectiveNoFileComp
+			case "terminal":
+				if runtime.GOOS == "windows" {
+					return []string{"auto", "wt", "powershell", "pwsh", "cmd"}, cobra.ShellCompDirectiveNoFileComp
+				}
+				return []string{"terminal", "iterm", "warp"}, cobra.ShellCompDirectiveNoFileComp
+			}
 		}
 		return nil, cobra.ShellCompDirectiveNoFileComp
 	},
@@ -146,119 +188,60 @@ var ConfigGetCmd = &cobra.Command{
 	Short:     "Get configuration values",
 	Long:      "Get configuration values. If no key is specified, show all configuration",
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"defaultBehavior"},
+	ValidArgs: []string{"default-behavior", "skip-permissions", "terminal"},
 	Run: func(cmd *cobra.Command, args []string) {
 		RunConfigGet(args)
 	},
 }
 
-// DefaultBehaviorCmd represents the default behavior command
-var DefaultBehaviorCmd = &cobra.Command{
-	Use:   "defaultbehavior",
-	Short: "Manage default behavior setting",
-	Long:  "Configure what directory to use when starting Claude without arguments",
-}
-
-// DefaultBehaviorSetCmd represents the defaultbehavior set command
-var DefaultBehaviorSetCmd = &cobra.Command{
-	Use:       "set <behavior>",
-	Short:     "Set the default behavior",
-	Long:      "Set the default startup behavior: 'current' (current directory), 'last' (last used directory), 'home' (home directory)",
-	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"current", "last", "home"},
+// ConfigResetCmd represents the config reset command
+var ConfigResetCmd = &cobra.Command{
+	Use:       "reset [key]",
+	Short:     "Reset configuration to defaults",
+	Long:      "Reset a configuration value to its default. If no key is specified, reset all settings.",
+	Args:      cobra.MaximumNArgs(1),
+	ValidArgs: []string{"default-behavior", "skip-permissions", "terminal"},
 	Run: func(cmd *cobra.Command, args []string) {
-		RunDefaultBehaviorSet(args[0])
+		RunConfigReset(args)
 	},
 }
 
-// DefaultBehaviorGetCmd represents the defaultbehavior get command
-var DefaultBehaviorGetCmd = &cobra.Command{
-	Use:   "get",
-	Short: "Get the current default behavior",
-	Long:  "Show the current default behavior setting",
+// ConfigListCmd represents the config list command
+var ConfigListCmd = &cobra.Command{
+	Use:       "list [key]",
+	Short:     "List available values for a configuration key",
+	Long:      "List available values for a configuration key (e.g., terminal options)",
+	Args:      cobra.MaximumNArgs(1),
+	ValidArgs: []string{"default-behavior", "skip-permissions", "terminal"},
 	Run: func(cmd *cobra.Command, args []string) {
-		RunDefaultBehaviorGet()
-	},
-}
-
-// DefaultBehaviorResetCmd represents the defaultbehavior reset command
-var DefaultBehaviorResetCmd = &cobra.Command{
-	Use:   "reset",
-	Short: "Reset to default behavior",
-	Long:  "Reset the default behavior to 'current' (default)",
-	Run: func(cmd *cobra.Command, args []string) {
-		RunDefaultBehaviorReset()
-	},
-}
-
-// SkipPermissionsCmd represents the skippermissions command
-var SkipPermissionsCmd = &cobra.Command{
-	Use:   "skippermissions",
-	Short: "Manage global skipPermissions setting",
-	Long:  "Configure the global skipPermissions setting for all Claude configurations",
-}
-
-// SkipPermissionsSetCmd represents the skippermissions set command
-var SkipPermissionsSetCmd = &cobra.Command{
-	Use:       "set <true|false>",
-	Short:     "Set the global skipPermissions",
-	Long:      "Set whether to use --dangerously-skip-permissions for all configurations that don't have their own setting",
-	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"true", "false"},
-	Run: func(cmd *cobra.Command, args []string) {
-		value := strings.ToLower(args[0])
-		var skip bool
-		switch value {
-		case "true", "t", "yes", "y", "1":
-			skip = true
-		case "false", "f", "no", "n", "0":
-			skip = false
-		default:
-			ui.ShowError("Invalid value. Must be 'true' or 'false' (case-insensitive)", nil)
-			return
-		}
-		RunSkipPermissionsSet(skip)
-	},
-}
-
-// SkipPermissionsGetCmd represents the skippermissions get command
-var SkipPermissionsGetCmd = &cobra.Command{
-	Use:   "get",
-	Short: "Get the global skipPermissions setting",
-	Long:  "Show the current global skipPermissions setting",
-	Run: func(cmd *cobra.Command, args []string) {
-		RunSkipPermissionsGet()
-	},
-}
-
-// SkipPermissionsResetCmd represents the skippermissions reset command
-var SkipPermissionsResetCmd = &cobra.Command{
-	Use:   "reset",
-	Short: "Reset global skipPermissions",
-	Long:  "Reset the global skipPermissions to false (default)",
-	Run: func(cmd *cobra.Command, args []string) {
-		RunSkipPermissionsReset()
+		RunConfigList(args)
 	},
 }
 
 // ProjectAddCmd represents the project add command
 var ProjectAddCmd = &cobra.Command{
-	Use:   "add <name> <path>",
+	Use:   "add [name] [path]",
 	Short: "Add a project alias",
-	Long:  "Add a project alias for quick access to a directory. Use --remote for remote projects.",
-	Args:  cobra.ExactArgs(2),
+	Long: `Add a project alias for quick access to a directory.
+
+With no arguments, uses the current directory name and path.
+With one argument, uses it as path and derives name from directory.
+With two arguments, uses them as name and path.
+
+Use --remote for remote projects.`,
+	Args: cobra.MaximumNArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
 		remoteName, _ := cmd.Flags().GetString("remote")
-		RunProjectAdd(args[0], args[1], remoteName)
+		RunProjectAdd2(args, remoteName)
 	},
 }
 
 // ProjectRemoveCmd represents the project remove command
 var ProjectRemoveCmd = &cobra.Command{
-	Use:   "remove <name>",
-	Short: "Remove a project alias",
-	Long:  "Remove a project alias",
-	Args:  cobra.ExactArgs(1),
+	Use:               "remove <name>",
+	Short:             "Remove a project alias",
+	Long:              "Remove a project alias",
+	Args:              cobra.ExactArgs(1),
 	ValidArgsFunction: completeProjectNames,
 	Run: func(cmd *cobra.Command, args []string) {
 		RunProjectRemove(args[0])
@@ -281,20 +264,12 @@ func init() {
 	ProjectCmd.AddCommand(ProjectRemoveCmd)
 	ProjectCmd.AddCommand(ProjectListCmd)
 
+	ProfileCmd.AddCommand(AddCmd, SelectCmd, TestCmd, ProfileListCmd, ProfileRemoveCmd)
+
 	ConfigCmd.AddCommand(ConfigSetCmd)
 	ConfigCmd.AddCommand(ConfigGetCmd)
-
-	DefaultBehaviorCmd.AddCommand(DefaultBehaviorSetCmd)
-	DefaultBehaviorCmd.AddCommand(DefaultBehaviorGetCmd)
-	DefaultBehaviorCmd.AddCommand(DefaultBehaviorResetCmd)
-
-	SkipPermissionsCmd.AddCommand(SkipPermissionsSetCmd)
-	SkipPermissionsCmd.AddCommand(SkipPermissionsGetCmd)
-	SkipPermissionsCmd.AddCommand(SkipPermissionsResetCmd)
-
-	TerminalCmd.AddCommand(TerminalSetCmd)
-	TerminalCmd.AddCommand(TerminalGetCmd)
-	TerminalCmd.AddCommand(TerminalListCmd)
+	ConfigCmd.AddCommand(ConfigResetCmd)
+	ConfigCmd.AddCommand(ConfigListCmd)
 
 	// Remote sub-commands
 	RemoteAddCmd.Flags().IntP("port", "p", 0, "SSH port")
@@ -310,66 +285,10 @@ func init() {
 }
 
 // CompletionCmd generates shell completion scripts
-// TerminalCmd represents the terminal command
-var TerminalCmd = &cobra.Command{
-	Use:   "terminal",
-	Short: "Manage terminal emulator setting",
-	Long:  "Configure which terminal emulator to use for Claude Code sessions",
-}
-
-// TerminalSetCmd sets the terminal emulator
-var TerminalSetCmd = &cobra.Command{
-	Use:   "set <terminal>",
-	Short: "Set the terminal emulator",
-	Long:  "Set which terminal emulator to use for sessions. Run 'codes terminal list' to see available options.",
-	Args:  cobra.ExactArgs(1),
-	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-		if len(args) > 0 {
-			return nil, cobra.ShellCompDirectiveNoFileComp
-		}
-		if runtime.GOOS == "windows" {
-			return []string{
-				"auto\tAuto-detect (Windows Terminal > PowerShell)",
-				"wt\tWindows Terminal",
-				"powershell\tWindows PowerShell",
-				"pwsh\tPowerShell Core",
-				"cmd\tCommand Prompt",
-			}, cobra.ShellCompDirectiveNoFileComp
-		}
-		return []string{
-			"terminal\tTerminal.app (macOS default)",
-			"iterm\tiTerm2",
-			"warp\tWarp",
-		}, cobra.ShellCompDirectiveNoFileComp
-	},
-	Run: func(cmd *cobra.Command, args []string) {
-		RunTerminalSet(args[0])
-	},
-}
-
-// TerminalGetCmd shows the current terminal emulator
-var TerminalGetCmd = &cobra.Command{
-	Use:   "get",
-	Short: "Show current terminal emulator",
-	Long:  "Show which terminal emulator is configured",
-	Run: func(cmd *cobra.Command, args []string) {
-		RunTerminalGet()
-	},
-}
-
-// TerminalListCmd lists available terminal options
-var TerminalListCmd = &cobra.Command{
-	Use:   "list",
-	Short: "List available terminal options",
-	Long:  "List known terminal emulator options",
-	Run: func(cmd *cobra.Command, args []string) {
-		RunTerminalList()
-	},
-}
-
 var CompletionCmd = &cobra.Command{
-	Use:   "completion [bash|zsh|fish|powershell]",
-	Short: "Generate shell completion script",
+	Use:    "completion [bash|zsh|fish|powershell]",
+	Short:  "Generate shell completion script",
+	Hidden: true,
 	Long: `Generate shell completion script for the specified shell.
 
 Usage examples:
@@ -413,9 +332,10 @@ var ServeCmd = &cobra.Command{
 
 // RemoteCmd represents the remote command
 var RemoteCmd = &cobra.Command{
-	Use:   "remote",
-	Short: "Manage remote SSH hosts",
-	Long:  "Add, remove, list, and manage remote SSH hosts for running Claude Code remotely",
+	Use:     "remote",
+	Aliases: []string{"r"},
+	Short:   "Manage remote SSH hosts",
+	Long:    "Add, remove, list, and manage remote SSH hosts for running Claude Code remotely",
 }
 
 // RemoteAddCmd adds a remote host
