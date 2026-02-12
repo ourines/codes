@@ -92,10 +92,27 @@ var ProfileRemoveCmd = &cobra.Command{
 // UpdateCmd represents the update command
 var UpdateCmd = &cobra.Command{
 	Use:   "update",
-	Short: "Update Claude to specific version",
-	Long:  "Update Claude CLI to a specific version",
+	Short: "Update codes to the latest version",
+	Long:  "Check for and install the latest version of codes CLI",
 	Run: func(cmd *cobra.Command, args []string) {
-		RunUpdate()
+		RunSelfUpdate()
+	},
+}
+
+// ClaudeCmd is the parent command for Claude CLI management.
+var ClaudeCmd = &cobra.Command{
+	Use:   "claude",
+	Short: "Manage Claude CLI",
+	Long:  "Manage the Claude CLI (npm @anthropic-ai/claude-code) installation and versions",
+}
+
+// ClaudeUpdateCmd updates the Claude CLI npm package.
+var ClaudeUpdateCmd = &cobra.Command{
+	Use:   "update",
+	Short: "Update Claude CLI to specific version",
+	Long:  "Update Claude CLI (npm @anthropic-ai/claude-code) to a specific version",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunClaudeUpdate()
 	},
 }
 
@@ -156,11 +173,11 @@ var ConfigCmd = &cobra.Command{
 var ConfigSetCmd = &cobra.Command{
 	Use:   "set <key> <value>",
 	Short: "Set a configuration value",
-	Long:  "Set a configuration value (keys: default-behavior, skip-permissions, terminal)",
+	Long:  "Set a configuration value (keys: default-behavior, skip-permissions, terminal, auto-update)",
 	Args:  cobra.ExactArgs(2),
 	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 		if len(args) == 0 {
-			return []string{"default-behavior", "skip-permissions", "terminal"}, cobra.ShellCompDirectiveNoFileComp
+			return []string{"default-behavior", "skip-permissions", "terminal", "auto-update"}, cobra.ShellCompDirectiveNoFileComp
 		}
 		if len(args) == 1 {
 			switch args[0] {
@@ -173,6 +190,8 @@ var ConfigSetCmd = &cobra.Command{
 					return []string{"auto", "wt", "powershell", "pwsh", "cmd"}, cobra.ShellCompDirectiveNoFileComp
 				}
 				return []string{"terminal", "iterm", "warp"}, cobra.ShellCompDirectiveNoFileComp
+			case "auto-update":
+				return []string{"notify", "silent", "off"}, cobra.ShellCompDirectiveNoFileComp
 			}
 		}
 		return nil, cobra.ShellCompDirectiveNoFileComp
@@ -270,6 +289,9 @@ func init() {
 	ConfigCmd.AddCommand(ConfigGetCmd)
 	ConfigCmd.AddCommand(ConfigResetCmd)
 	ConfigCmd.AddCommand(ConfigListCmd)
+
+	// Claude sub-commands
+	ClaudeCmd.AddCommand(ClaudeUpdateCmd)
 
 	// Remote sub-commands
 	RemoteAddCmd.Flags().IntP("port", "p", 0, "SSH port")
