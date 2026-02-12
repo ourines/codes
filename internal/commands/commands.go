@@ -640,7 +640,7 @@ func appendCompletionLine(configFile, completionLine string) {
 	ui.ShowSuccess("Shell completion installed in %s", configFile)
 }
 
-func RunInit() {
+func RunInit(autoYes bool) {
 	ui.ShowHeader("Codes CLI Setup")
 	fmt.Println()
 
@@ -648,7 +648,7 @@ func RunInit() {
 
 	// 0. Check if Git is installed
 	ui.ShowInfo("Checking Git installation...")
-	if !checkGitAvailable() {
+	if !checkGitAvailable(autoYes) {
 		allGood = false
 	}
 	fmt.Println()
@@ -656,7 +656,7 @@ func RunInit() {
 	// 1. Check PowerShell execution policy (Windows only, no-op on other platforms)
 	if runtime.GOOS == "windows" {
 		ui.ShowInfo("Checking PowerShell execution policy...")
-		if !checkExecutionPolicy() {
+		if !checkExecutionPolicy(autoYes) {
 			allGood = false
 		}
 		fmt.Println()
@@ -726,19 +726,27 @@ func RunInit() {
 
 	// If env config exists but no codes config, offer to import
 	if hasEnvConfig && !configExists {
-		fmt.Println()
-		ui.ShowInfo("Would you like to import this configuration? (y/n): ")
-		reader := bufio.NewReader(os.Stdin)
-		response, _ := reader.ReadString('\n')
-		response = strings.TrimSpace(strings.ToLower(response))
+		doImport := autoYes
+		if !autoYes {
+			fmt.Println()
+			ui.ShowInfo("Would you like to import this configuration? (y/n): ")
+			reader := bufio.NewReader(os.Stdin)
+			response, _ := reader.ReadString('\n')
+			response = strings.TrimSpace(strings.ToLower(response))
+			doImport = response == "y" || response == "yes"
+		}
 
-		if response == "y" || response == "yes" {
-			// Prompt for configuration name
-			fmt.Print("Enter a name for this configuration (default: imported): ")
-			name, _ := reader.ReadString('\n')
-			name = strings.TrimSpace(name)
-			if name == "" {
-				name = "imported"
+		if doImport {
+			name := "imported"
+			if !autoYes {
+				// Prompt for configuration name
+				reader := bufio.NewReader(os.Stdin)
+				fmt.Print("Enter a name for this configuration (default: imported): ")
+				input, _ := reader.ReadString('\n')
+				input = strings.TrimSpace(input)
+				if input != "" {
+					name = input
+				}
 			}
 
 			// Create and test configuration

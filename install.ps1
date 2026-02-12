@@ -47,7 +47,7 @@ if ($UserPath -notlike "*$InstallDir*") {
 
 # Run init
 Write-Host "  > Running codes init..." -ForegroundColor Cyan
-& $InstallPath init
+& $InstallPath init --yes
 
 Write-Host ""
 Write-Host "  ✓ Installation complete! Run 'codes --help' to get started." -ForegroundColor Green

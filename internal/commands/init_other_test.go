@@ -8,7 +8,7 @@ import (
 
 func TestCheckExecutionPolicy_NonWindows(t *testing.T) {
 	// On non-Windows platforms, execution policy check always passes
-	if !checkExecutionPolicy() {
+	if !checkExecutionPolicy(false) {
 		t.Error("checkExecutionPolicy() should return true on non-Windows")
 	}
 }
