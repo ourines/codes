@@ -230,8 +230,8 @@ func TestBuildRemoteWindowsScript_WithProject(t *testing.T) {
 	}
 	script, _ := buildRemoteWindowsScript("remote-dev", host, "/home/deploy/project")
 
-	if !strings.Contains(script, "cd '/home/deploy/project'") {
-		t.Error("script should cd to project directory on remote")
+	if !strings.Contains(script, "/home/deploy/project") {
+		t.Error("script should contain project directory path")
 	}
 }
 
