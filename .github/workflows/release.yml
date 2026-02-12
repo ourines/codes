@@ -1,13 +1,132 @@
-name: Build and Release
+name: Release
 
 on:
   push:
-    tags:
-      - 'v*.*.*'
+    branches: [main]
   workflow_dispatch:
 
+# Prevent concurrent releases
+concurrency:
+  group: release
+  cancel-in-progress: false
+
 jobs:
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      next_version: ${{ steps.version.outputs.next_version }}
+      changelog: ${{ steps.changelog.outputs.changelog }}
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0
+
+    - name: Check if release needed
+      id: check
+      run: |
+        # Skip if the last commit is a release commit (avoid infinite loop)
+        LAST_MSG=$(git log -1 --pretty=%s)
+        if [[ "$LAST_MSG" == chore:\ release* ]]; then
+          echo "should_release=false" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Skip if no meaningful changes since last tag
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        if [ -z "$LAST_TAG" ]; then
+          echo "should_release=true" >> $GITHUB_OUTPUT
+          exit 0
+        fi
+
+        # Check for feat/fix/refactor commits since last tag
+        COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=%s)
+        if echo "$COMMITS" | grep -qE '^(feat|fix|refactor|perf|breaking)'; then
+          echo "should_release=true" >> $GITHUB_OUTPUT
+        else
+          echo "should_release=false" >> $GITHUB_OUTPUT
+        fi
+
+    - name: Determine next version
+      if: steps.check.outputs.should_release == 'true'
+      id: version
+      run: |
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+        echo "Last tag: $LAST_TAG"
+
+        # Parse semver
+        VERSION=${LAST_TAG#v}
+        MAJOR=$(echo $VERSION | cut -d. -f1)
+        MINOR=$(echo $VERSION | cut -d. -f2)
+        PATCH=$(echo $VERSION | cut -d. -f3)
+
+        # Determine bump type from commits
+        COMMITS=$(git log ${LAST_TAG}..HEAD --pretty=%s 2>/dev/null || git log --pretty=%s)
+        if echo "$COMMITS" | grep -qiE '^breaking|BREAKING CHANGE'; then
+          MAJOR=$((MAJOR + 1))
+          MINOR=0
+          PATCH=0
+        elif echo "$COMMITS" | grep -qE '^feat'; then
+          MINOR=$((MINOR + 1))
+          PATCH=0
+        else
+          PATCH=$((PATCH + 1))
+        fi
+
+        NEXT="v${MAJOR}.${MINOR}.${PATCH}"
+        echo "Next version: $NEXT"
+        echo "next_version=$NEXT" >> $GITHUB_OUTPUT
+
+    - name: Generate changelog
+      if: steps.check.outputs.should_release == 'true'
+      id: changelog
+      run: |
+        LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+        if [ -z "$LAST_TAG" ]; then
+          RANGE="HEAD"
+        else
+          RANGE="${LAST_TAG}..HEAD"
+        fi
+
+        {
+          echo 'changelog<<CHANGELOG_EOF'
+
+          # Features
+          FEATS=$(git log $RANGE --pretty="- %s (%h)" --grep="^feat" --extended-regexp 2>/dev/null)
+          if [ -n "$FEATS" ]; then
+            echo "### Features"
+            echo "$FEATS"
+            echo ""
+          fi
+
+          # Fixes
+          FIXES=$(git log $RANGE --pretty="- %s (%h)" --grep="^fix" --extended-regexp 2>/dev/null)
+          if [ -n "$FIXES" ]; then
+            echo "### Bug Fixes"
+            echo "$FIXES"
+            echo ""
+          fi
+
+          # Other changes (refactor, perf, etc.)
+          OTHERS=$(git log $RANGE --pretty="- %s (%h)" --grep="^refactor\|^perf\|^chore\|^ci\|^docs\|^test\|^build" --extended-regexp 2>/dev/null)
+          if [ -n "$OTHERS" ]; then
+            echo "### Other Changes"
+            echo "$OTHERS"
+            echo ""
+          fi
+
+          echo "### Platforms"
+          echo "- Linux (amd64, arm64)"
+          echo "- macOS (amd64, arm64)"
+          echo "- Windows (amd64, arm64)"
+
+          echo 'CHANGELOG_EOF'
+        } >> $GITHUB_OUTPUT
+
   build:
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
     strategy:
       matrix:
         include:
@@ -51,17 +170,22 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
-    - name: Build codes
+    - name: Build
       shell: bash
       env:
         GOOS: ${{ matrix.goos }}
         GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: '0'
       run: |
+        VERSION=${{ needs.check.outputs.next_version }}
+        COMMIT=$(git rev-parse --short HEAD)
+        DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        LDFLAGS="-s -w -X codes/internal/commands.Version=${VERSION} -X codes/internal/commands.Commit=${COMMIT} -X codes/internal/commands.Date=${DATE}"
+
         if [ "${{ matrix.goos }}" = "windows" ]; then
-          go build -o codes.exe ./cmd/codes
+          go build -ldflags "$LDFLAGS" -o codes.exe ./cmd/codes
         else
-          go build -o codes ./cmd/codes
+          go build -ldflags "$LDFLAGS" -o codes ./cmd/codes
         fi
 
     - name: Test
@@ -74,30 +198,22 @@ jobs:
           ./codes version
         fi
 
-    - name: Set binary name
-      id: binary
-      shell: bash
-      run: |
-        if [ "${{ matrix.goos }}" = "windows" ]; then
-          echo "name=codes.exe" >> $GITHUB_OUTPUT
-        else
-          echo "name=codes" >> $GITHUB_OUTPUT
-        fi
-
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
         name: codes-${{ matrix.goos }}-${{ matrix.goarch }}
-        path: ${{ steps.binary.outputs.name }}
+        path: codes${{ matrix.goos == 'windows' && '.exe' || '' }}
         retention-days: 7
 
   release:
-    needs: build
+    needs: [check, build]
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/v')
     permissions:
       contents: write
     steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
     - name: Download all artifacts
       uses: actions/download-artifact@v4
       with:
@@ -112,6 +228,7 @@ jobs:
             mv "$dir/codes.exe" "release/codes-$platform.exe"
           elif [ -f "$dir/codes" ]; then
             mv "$dir/codes" "release/codes-$platform"
+            chmod +x "release/codes-$platform"
           fi
         done
         ls -la release/
@@ -119,12 +236,10 @@ jobs:
     - name: Create release
       uses: softprops/action-gh-release@v2
       with:
+        tag_name: ${{ needs.check.outputs.next_version }}
+        name: ${{ needs.check.outputs.next_version }}
+        body: ${{ needs.check.outputs.changelog }}
         files: release/*
         draft: false
         prerelease: false
-        body: |
-          Cross-platform builds for codes CLI tool
-
-          - Linux (amd64, arm64)
-          - Windows (amd64, arm64)
-          - macOS (amd64, arm64)
+        make_latest: true
