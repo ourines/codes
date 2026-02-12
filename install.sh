@@ -97,7 +97,7 @@ main() {
 
     # Run init for shell completion and environment check
     info "Running ${BINARY} init..."
-    "${INSTALL_DIR}/${BINARY}" init
+    "${INSTALL_DIR}/${BINARY}" init --yes
 
     printf '\n'
     ok "Installation complete! Run 'codes --help' to get started."

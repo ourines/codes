@@ -10,7 +10,7 @@ import (
 )
 
 // checkGitAvailable checks if git is installed and suggests installation via package manager.
-func checkGitAvailable() bool {
+func checkGitAvailable(autoYes bool) bool {
 	if _, err := exec.LookPath("git"); err == nil {
 		ui.ShowSuccess("Git is installed")
 		return true
@@ -33,7 +33,7 @@ func checkGitAvailable() bool {
 }
 
 // checkExecutionPolicy is a no-op on non-Windows platforms.
-func checkExecutionPolicy() bool {
+func checkExecutionPolicy(autoYes bool) bool {
 	return true
 }
 

@@ -19,8 +19,13 @@ var InitCmd = &cobra.Command{
 	Short: "Check environment and configuration",
 	Long:  "Verify Claude CLI installation and validate configuration files",
 	Run: func(cmd *cobra.Command, args []string) {
-		RunInit()
+		autoYes, _ := cmd.Flags().GetBool("yes")
+		RunInit(autoYes)
 	},
+}
+
+func init() {
+	InitCmd.Flags().BoolP("yes", "y", false, "Auto-accept all prompts (for non-interactive use)")
 }
 
 // AddCmd represents the add command

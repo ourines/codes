@@ -13,8 +13,16 @@ import (
 	"codes/internal/ui"
 )
 
+// promptYesNo reads a single line from stdin and returns true if the user typed y/yes.
+func promptYesNo() bool {
+	reader := bufio.NewReader(os.Stdin)
+	response, _ := reader.ReadString('\n')
+	response = strings.TrimSpace(strings.ToLower(response))
+	return response == "y" || response == "yes"
+}
+
 // checkGitAvailable checks if git is installed and offers to install via winget if missing.
-func checkGitAvailable() bool {
+func checkGitAvailable(autoYes bool) bool {
 	if _, err := exec.LookPath("git"); err == nil {
 		ui.ShowSuccess("Git is installed")
 		return true
@@ -24,29 +32,30 @@ func checkGitAvailable() bool {
 
 	// Check if winget is available
 	if _, err := exec.LookPath("winget"); err == nil {
-		ui.ShowInfo("  Git can be installed via winget.")
-		fmt.Print("  Install Git now? (y/n): ")
-		reader := bufio.NewReader(os.Stdin)
-		response, _ := reader.ReadString('\n')
-		response = strings.TrimSpace(strings.ToLower(response))
-
-		if response == "y" || response == "yes" {
-			ui.ShowLoading("Installing Git via winget...")
-			cmd := exec.Command("winget", "install", "--id", "Git.Git", "-e",
-				"--source", "winget",
-				"--accept-package-agreements",
-				"--accept-source-agreements")
-			cmd.Stdout = os.Stdout
-			cmd.Stderr = os.Stderr
-			if err := cmd.Run(); err != nil {
-				ui.ShowError("Failed to install Git via winget", err)
-				ui.ShowInfo("  Please install Git manually: https://git-scm.com/download/win")
+		if !autoYes {
+			ui.ShowInfo("  Git can be installed via winget.")
+			fmt.Print("  Install Git now? (y/n): ")
+			if !promptYesNo() {
+				ui.ShowInfo("  Please install Git from: https://git-scm.com/download/win")
 				return false
 			}
-			ui.ShowSuccess("Git installed successfully")
-			ui.ShowWarning("  You may need to restart your terminal for git to be available in PATH")
-			return true
 		}
+
+		ui.ShowLoading("Installing Git via winget...")
+		cmd := exec.Command("winget", "install", "--id", "Git.Git", "-e",
+			"--source", "winget",
+			"--accept-package-agreements",
+			"--accept-source-agreements")
+		cmd.Stdout = os.Stdout
+		cmd.Stderr = os.Stderr
+		if err := cmd.Run(); err != nil {
+			ui.ShowError("Failed to install Git via winget", err)
+			ui.ShowInfo("  Please install Git manually: https://git-scm.com/download/win")
+			return false
+		}
+		ui.ShowSuccess("Git installed successfully")
+		ui.ShowWarning("  You may need to restart your terminal for git to be available in PATH")
+		return true
 	}
 
 	ui.ShowInfo("  Please install Git from: https://git-scm.com/download/win")
@@ -54,7 +63,7 @@ func checkGitAvailable() bool {
 }
 
 // checkExecutionPolicy checks PowerShell execution policy and offers to fix if restricted.
-func checkExecutionPolicy() bool {
+func checkExecutionPolicy(autoYes bool) bool {
 	cmd := exec.Command("powershell", "-NoProfile", "-Command", "Get-ExecutionPolicy -Scope CurrentUser")
 	output, err := cmd.Output()
 	if err != nil {
@@ -66,24 +75,24 @@ func checkExecutionPolicy() bool {
 	switch strings.ToLower(policy) {
 	case "restricted", "allsigned":
 		ui.ShowWarning("PowerShell execution policy is '%s' (scripts cannot run)", policy)
-		fmt.Print("  Set execution policy to RemoteSigned? (y/n): ")
-		reader := bufio.NewReader(os.Stdin)
-		response, _ := reader.ReadString('\n')
-		response = strings.TrimSpace(strings.ToLower(response))
 
-		if response == "y" || response == "yes" {
-			fixCmd := exec.Command("powershell", "-NoProfile", "-Command",
-				"Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force")
-			if err := fixCmd.Run(); err != nil {
-				ui.ShowError("Failed to set execution policy", err)
-				ui.ShowInfo("  Run manually: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force")
+		if !autoYes {
+			fmt.Print("  Set execution policy to RemoteSigned? (y/n): ")
+			if !promptYesNo() {
+				ui.ShowWarning("  PowerShell scripts may not work without changing execution policy")
 				return false
 			}
-			ui.ShowSuccess("Execution policy set to RemoteSigned")
-			return true
 		}
-		ui.ShowWarning("  PowerShell scripts may not work without changing execution policy")
-		return false
+
+		fixCmd := exec.Command("powershell", "-NoProfile", "-Command",
+			"Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force")
+		if err := fixCmd.Run(); err != nil {
+			ui.ShowError("Failed to set execution policy", err)
+			ui.ShowInfo("  Run manually: Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser -Force")
+			return false
+		}
+		ui.ShowSuccess("Execution policy set to RemoteSigned")
+		return true
 	default:
 		// RemoteSigned, Unrestricted, Bypass, Undefined — all acceptable
 		ui.ShowSuccess("PowerShell execution policy: %s", policy)
