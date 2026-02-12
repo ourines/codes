@@ -37,6 +37,24 @@ func RunSSH(host *config.RemoteHost, command string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// RunSSHWithAgent runs a command on a remote host with SSH agent forwarding (-A).
+// This allows the remote host to use the local SSH keys for operations like git clone.
+func RunSSHWithAgent(host *config.RemoteHost, command string) (string, error) {
+	args := sshArgs(host)
+	args = append(args, "-A", host.UserAtHost(), command)
+
+	cmd := exec.Command("ssh", args...)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail != "" {
+			return "", fmt.Errorf("ssh %s: %s", host.UserAtHost(), detail)
+		}
+		return "", fmt.Errorf("ssh %s: %w", host.UserAtHost(), err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // RunSSHInteractive opens an interactive SSH session with TTY allocation.
 func RunSSHInteractive(host *config.RemoteHost, command string) error {
 	args := []string{"-t"} // force TTY

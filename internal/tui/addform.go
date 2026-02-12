@@ -196,6 +196,26 @@ func repoNameFromURL(url string) string {
 	return url
 }
 
+// isHTTPSURL checks if the given URL is an HTTPS git URL.
+func isHTTPSURL(url string) bool {
+	return strings.HasPrefix(strings.TrimSpace(url), "https://")
+}
+
+// httpsToSSH converts an HTTPS git URL to an SSH git URL.
+// e.g. https://github.com/user/repo.git → git@github.com:user/repo.git
+func httpsToSSH(url string) string {
+	url = strings.TrimSpace(url)
+	url = strings.TrimPrefix(url, "https://")
+	// Split host and path: "github.com/user/repo.git" → "github.com", "user/repo.git"
+	idx := strings.Index(url, "/")
+	if idx < 0 {
+		return url
+	}
+	host := url[:idx]
+	path := url[idx+1:]
+	return fmt.Sprintf("git@%s:%s", host, path)
+}
+
 // checkGitMode updates the git mode state based on the current path input.
 func (m *addFormModel) checkGitMode() {
 	val := strings.TrimSpace(m.pathInput.Value())

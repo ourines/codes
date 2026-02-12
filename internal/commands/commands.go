@@ -1355,9 +1355,15 @@ func RunConfigSet(key, value string) {
 		default:
 			ui.ShowError("Invalid value for auto-update. Must be 'notify', 'silent', or 'off'", nil)
 		}
+	case "editor":
+		if err := config.SetEditor(value); err != nil {
+			ui.ShowError("Failed to set editor", err)
+			return
+		}
+		ui.ShowSuccess("editor set to: %s", value)
 	default:
 		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
-		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update")
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update, editor")
 	}
 }
 
@@ -1393,6 +1399,11 @@ func RunConfigGet(args []string) {
 		fmt.Printf("  skip-permissions: %v\n", cfg.SkipPermissions)
 		fmt.Printf("  terminal: %s\n", terminal)
 		fmt.Printf("  auto-update: %s\n", autoUpdate)
+		editor := cfg.Editor
+		if editor == "" {
+			editor = "(auto-detect)"
+		}
+		fmt.Printf("  editor: %s\n", editor)
 		fmt.Printf("  default: %s\n", cfg.Default)
 		fmt.Printf("  projects: %d configured\n", len(cfg.Projects))
 		return
@@ -1408,9 +1419,16 @@ func RunConfigGet(args []string) {
 		RunTerminalGet()
 	case "auto-update", "autoUpdate":
 		fmt.Printf("auto-update: %s\n", config.GetAutoUpdate())
+	case "editor":
+		editor := config.GetEditor()
+		if editor == "" {
+			fmt.Println("editor: (auto-detect)")
+		} else {
+			fmt.Printf("editor: %s\n", editor)
+		}
 	default:
 		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
-		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update")
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update, editor")
 	}
 }
 
@@ -1684,6 +1702,11 @@ func RunConfigReset(args []string) {
 		} else {
 			ui.ShowSuccess("auto-update reset to default (notify)")
 		}
+		if err := config.SetEditor(""); err != nil {
+			ui.ShowWarning("Failed to reset editor: %v", err)
+		} else {
+			ui.ShowSuccess("editor reset to default (auto-detect)")
+		}
 		return
 	}
 
@@ -1701,9 +1724,15 @@ func RunConfigReset(args []string) {
 		} else {
 			ui.ShowSuccess("auto-update reset to default (notify)")
 		}
+	case "editor":
+		if err := config.SetEditor(""); err != nil {
+			ui.ShowWarning("Failed to reset editor: %v", err)
+		} else {
+			ui.ShowSuccess("editor reset to default (auto-detect)")
+		}
 	default:
 		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
-		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update")
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update, editor")
 	}
 }
 
@@ -1715,6 +1744,7 @@ func RunConfigList(args []string) {
 		fmt.Println("  skip-permissions  Global --dangerously-skip-permissions (true, false)")
 		fmt.Println("  terminal          Terminal emulator for sessions")
 		fmt.Println("  auto-update       Auto-update check mode (notify, silent, off)")
+		fmt.Println("  editor            Editor command for opening projects")
 		fmt.Println()
 		fmt.Println("Use 'codes config list <key>' to see available values for a key.")
 		return
@@ -1738,9 +1768,18 @@ func RunConfigList(args []string) {
 		fmt.Println("  notify   Show notification when new version is available (default)")
 		fmt.Println("  silent   Download new version in background, apply on next launch")
 		fmt.Println("  off      Disable automatic update checks")
+	case "editor":
+		fmt.Println("Available values for editor:")
+		fmt.Println("  code     Visual Studio Code")
+		fmt.Println("  cursor   Cursor")
+		fmt.Println("  zed      Zed")
+		fmt.Println("  subl     Sublime Text")
+		fmt.Println("  vim      Vim")
+		fmt.Println("  nvim     Neovim")
+		fmt.Println("  <cmd>    Any command that accepts a path argument")
 	default:
 		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
-		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update")
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update, editor")
 	}
 }
 

@@ -18,13 +18,38 @@ type projectItem struct {
 }
 
 func (i projectItem) Title() string {
-	if i.info.Remote != "" {
-		return i.info.Name + " [" + i.info.Remote + "]"
-	}
 	return i.info.Name
 }
-func (i projectItem) Description() string { return i.info.Path }
-func (i projectItem) FilterValue() string { return i.info.Name }
+
+func (i projectItem) Description() string {
+	var parts []string
+	parts = append(parts, i.info.Path)
+	if i.info.Remote != "" {
+		parts = append(parts, "⇅ "+i.info.Remote)
+	}
+	if i.info.GitBranch != "" {
+		branch := "⎇ " + i.info.GitBranch
+		if i.info.GitDirty {
+			branch += "*"
+		}
+		parts = append(parts, branch)
+	}
+	if !i.info.Exists {
+		parts = append(parts, "✗ missing")
+	}
+	return strings.Join(parts, "  ")
+}
+
+func (i projectItem) FilterValue() string {
+	s := i.info.Name + " " + i.info.Path
+	if i.info.Remote != "" {
+		s += " " + i.info.Remote
+	}
+	if i.info.GitBranch != "" {
+		s += " " + i.info.GitBranch
+	}
+	return s
+}
 
 // loadProjects returns a sorted slice of list.Item from the configured projects.
 func loadProjects() []list.Item {
