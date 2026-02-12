@@ -123,7 +123,7 @@ func NewModel() Model {
 	projectDelegate := list.NewDefaultDelegate()
 	projectDelegate.ShowDescription = true
 	pl := list.New(projectItems, projectDelegate, 0, 0)
-	pl.Title = "Projects"
+	pl.SetShowTitle(false)
 	pl.SetShowHelp(false)
 	pl.SetShowStatusBar(true)
 	pl.SetFilteringEnabled(true)
@@ -133,7 +133,7 @@ func NewModel() Model {
 	profileDelegate := list.NewDefaultDelegate()
 	profileDelegate.ShowDescription = true
 	cl := list.New(profileItems, profileDelegate, 0, 0)
-	cl.Title = "Profiles"
+	cl.SetShowTitle(false)
 	cl.SetShowHelp(false)
 	cl.SetShowStatusBar(true)
 	cl.SetFilteringEnabled(true)
@@ -143,7 +143,7 @@ func NewModel() Model {
 	remoteDelegate := list.NewDefaultDelegate()
 	remoteDelegate.ShowDescription = true
 	rl := list.New(remoteItems, remoteDelegate, 0, 0)
-	rl.Title = "Remotes"
+	rl.SetShowTitle(false)
 	rl.SetShowHelp(false)
 	rl.SetShowStatusBar(true)
 	rl.SetFilteringEnabled(true)
@@ -485,7 +485,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			// Local clone
 			cmd := exec.Command("git", "clone", gitURL, clonePath)
-			if err := cmd.Run(); err != nil {
+			out, err := cmd.CombinedOutput()
+			if err != nil {
+				detail := strings.TrimSpace(string(out))
+				if detail != "" {
+					return gitCloneMsg{err: fmt.Errorf("git clone failed:\n%s", detail)}
+				}
 				return gitCloneMsg{err: fmt.Errorf("git clone: %w", err)}
 			}
 			return gitCloneMsg{name: name, path: clonePath}
