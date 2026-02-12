@@ -790,7 +790,7 @@ func RunInit(autoYes bool) {
 	if !configExists {
 		ui.ShowError("Configuration file not found", nil)
 		ui.ShowInfo("  Expected location: %s", config.ConfigPath)
-		ui.ShowWarning("  Run 'codes add' to create your first configuration")
+		ui.ShowWarning("  Run 'codes profile add' to create your first configuration")
 		allGood = false
 	} else {
 		ui.ShowSuccess("Configuration file exists")
@@ -805,7 +805,7 @@ func RunInit(autoYes bool) {
 		} else {
 			if len(cfg.Profiles) == 0 {
 				ui.ShowWarning("✗ No configurations found in config file")
-				ui.ShowWarning("  Run 'codes add' to add a configuration")
+				ui.ShowWarning("  Run 'codes profile add' to add a configuration")
 				allGood = false
 			} else {
 				ui.ShowSuccess("Found %d configuration(s)", len(cfg.Profiles))
@@ -883,12 +883,12 @@ func RunInit(autoYes bool) {
 						} else {
 							ui.ShowWarning("✗ Default configuration test failed")
 							ui.ShowWarning("  API may be unreachable or credentials may be invalid")
-							ui.ShowInfo("  Run 'codes add' to add a new configuration")
+							ui.ShowInfo("  Run 'codes profile add' to add a new configuration")
 							allGood = false
 						}
 					} else {
 						ui.ShowWarning("✗ Default configuration '%s' not found", cfg.Default)
-						ui.ShowWarning("  Run 'codes select' to choose a valid configuration")
+						ui.ShowWarning("  Run 'codes profile select' to choose a valid configuration")
 						allGood = false
 					}
 				}
@@ -905,8 +905,8 @@ func RunInit(autoYes bool) {
 		fmt.Println()
 		ui.ShowInfo("Quick commands:")
 		ui.ShowInfo("  codes          - Run Claude with current configuration")
-		ui.ShowInfo("  codes select   - Switch between configurations")
-		ui.ShowInfo("  codes add      - Add a new configuration")
+		ui.ShowInfo("  codes pf select - Switch between configurations")
+		ui.ShowInfo("  codes pf add    - Add a new configuration")
 	} else {
 		ui.ShowWarning("Some checks failed. Please review the messages above.")
 		fmt.Println()
@@ -918,7 +918,7 @@ func RunInit(autoYes bool) {
 			ui.ShowInfo("  2. Install Claude CLI: codes update")
 		}
 		if _, err := os.Stat(config.ConfigPath); err != nil {
-			ui.ShowInfo("  3. Add a configuration: codes add")
+			ui.ShowInfo("  3. Add a configuration: codes profile add")
 		}
 	}
 }
@@ -1127,7 +1127,7 @@ func RunProjectList() {
 
 	if len(projects) == 0 {
 		ui.ShowInfo("No projects configured yet")
-		ui.ShowInfo("Add a project with: codes project add <name> <path>")
+		ui.ShowInfo("Add a project with: codes project add [name] [path]")
 		return
 	}
 
@@ -1180,7 +1180,7 @@ func RunTest(args []string) {
 
 	if len(cfg.Profiles) == 0 {
 		ui.ShowError("No configurations found", nil)
-		ui.ShowInfo("Run 'codes add' to add a configuration first")
+		ui.ShowInfo("Run 'codes profile add' to add a configuration first")
 		return
 	}
 
@@ -1304,7 +1304,7 @@ func testAllConfigurations(configs []config.APIConfig) {
 		ui.ShowInfo("Check your configurations and network connectivity")
 	} else {
 		ui.ShowWarning("Some configurations failed")
-		ui.ShowInfo("Use 'codes test <config-name>' to test individual configurations")
+		ui.ShowInfo("Use 'codes profile test <config-name>' to test individual configurations")
 	}
 
 	// 保存更新后的状态
@@ -1334,60 +1334,73 @@ func testAllConfigurations(configs []config.APIConfig) {
 
 // RunConfigSet 设置配置值
 func RunConfigSet(key, value string) {
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		ui.ShowError("Error loading config", err)
-		return
-	}
-
 	switch key {
-	case "defaultBehavior":
-		// 验证值
-		if value != "current" && value != "last" && value != "home" {
-			ui.ShowError("Invalid value for defaultBehavior. Must be 'current', 'last', or 'home'", nil)
+	case "default-behavior", "defaultBehavior":
+		RunDefaultBehaviorSet(value)
+	case "skip-permissions", "skipPermissions":
+		v := strings.ToLower(value)
+		var skip bool
+		switch v {
+		case "true", "t", "yes", "y", "1":
+			skip = true
+		case "false", "f", "no", "n", "0":
+			skip = false
+		default:
+			ui.ShowError("Invalid value for skip-permissions. Must be 'true' or 'false'", nil)
 			return
 		}
-		cfg.DefaultBehavior = value
-		ui.ShowSuccess("Default behavior set to: %s", value)
+		RunSkipPermissionsSet(skip)
+	case "terminal":
+		RunTerminalSet(value)
 	default:
 		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
-		fmt.Printf("Available keys: defaultBehavior\n")
-		return
-	}
-
-	if err := config.SaveConfig(cfg); err != nil {
-		ui.ShowError("Error saving config", err)
-		return
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal")
 	}
 }
 
 // RunConfigGet 获取配置值
 func RunConfigGet(args []string) {
-	cfg, err := config.LoadConfig()
-	if err != nil {
-		ui.ShowError("Error loading config", err)
+	if len(args) == 0 {
+		// 显示所有设置
+		cfg, err := config.LoadConfig()
+		if err != nil {
+			ui.ShowError("Error loading config", err)
+			return
+		}
+
+		behavior := cfg.DefaultBehavior
+		if behavior == "" {
+			behavior = "current"
+		}
+		terminal := cfg.Terminal
+		if terminal == "" {
+			if runtime.GOOS == "windows" {
+				terminal = "auto"
+			} else {
+				terminal = "terminal"
+			}
+		}
+
+		fmt.Println("Current configuration:")
+		fmt.Printf("  default-behavior: %s\n", behavior)
+		fmt.Printf("  skip-permissions: %v\n", cfg.SkipPermissions)
+		fmt.Printf("  terminal: %s\n", terminal)
+		fmt.Printf("  default: %s\n", cfg.Default)
+		fmt.Printf("  projects: %d configured\n", len(cfg.Projects))
 		return
 	}
 
-	if len(args) > 0 {
-		// 显示特定配置
-		key := args[0]
-		switch key {
-		case "defaultBehavior":
-			fmt.Printf("%s: %s\n", key, cfg.DefaultBehavior)
-		default:
-			ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
-			fmt.Printf("Available keys: defaultBehavior\n")
-			return
-		}
-	} else {
-		// 显示所有配置
-		fmt.Println("Current configuration:")
-		fmt.Printf("  defaultBehavior: %s\n", cfg.DefaultBehavior)
-		fmt.Printf("  skipPermissions: %v\n", cfg.SkipPermissions)
-		fmt.Printf("  lastWorkDir: %s\n", cfg.LastWorkDir)
-		fmt.Printf("  default: %s\n", cfg.Default)
-		fmt.Printf("  projects: %d configured\n", len(cfg.Projects))
+	key := args[0]
+	switch key {
+	case "default-behavior", "defaultBehavior":
+		RunDefaultBehaviorGet()
+	case "skip-permissions", "skipPermissions":
+		RunSkipPermissionsGet()
+	case "terminal":
+		RunTerminalGet()
+	default:
+		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal")
 	}
 }
 
@@ -1456,7 +1469,7 @@ func RunDefaultBehaviorGet() {
 
 	fmt.Println()
 	ui.ShowInfo("To change this setting:")
-	ui.ShowInfo("  codes defaultbehavior set <current|last|home>")
+	ui.ShowInfo("  codes config set default-behavior <current|last|home>")
 }
 
 // RunDefaultBehaviorReset 重置默认行为
@@ -1563,6 +1576,199 @@ func RunSkipPermissionsReset() {
 	ui.ShowInfo("Claude will now run without --dangerously-skip-permissions unless a specific configuration has it enabled.")
 }
 
+// RunProfileList 列出所有 profile 及其状态
+func RunProfileList() {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	if len(cfg.Profiles) == 0 {
+		ui.ShowInfo("No profiles configured yet")
+		ui.ShowInfo("Add a profile with: codes profile add")
+		return
+	}
+
+	fmt.Println()
+	ui.ShowHeader("API Profiles")
+	fmt.Println()
+
+	for i, c := range cfg.Profiles {
+		isDefault := ""
+		if c.Name == cfg.Default {
+			isDefault = " (default)"
+		}
+
+		apiURL := c.Env["ANTHROPIC_BASE_URL"]
+		if apiURL == "" {
+			apiURL = "unknown"
+		}
+
+		statusIcon := "?"
+		statusText := "unknown"
+		if c.Status == "active" {
+			statusIcon = "✓"
+			statusText = "active"
+		} else if c.Status == "inactive" {
+			statusIcon = "✗"
+			statusText = "inactive"
+		}
+
+		ui.ShowInfo("%d. %s %s%s - %s [%s]", i+1, statusIcon, c.Name, isDefault, apiURL, statusText)
+	}
+
+	fmt.Println()
+}
+
+// RunProfileRemove 删除指定 profile
+func RunProfileRemove(name string) {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Error loading config", err)
+		return
+	}
+
+	found := -1
+	for i, c := range cfg.Profiles {
+		if c.Name == name {
+			found = i
+			break
+		}
+	}
+
+	if found == -1 {
+		ui.ShowError(fmt.Sprintf("Profile '%s' not found", name), nil)
+		return
+	}
+
+	cfg.Profiles = append(cfg.Profiles[:found], cfg.Profiles[found+1:]...)
+
+	// If removed the default, switch to first available
+	if cfg.Default == name {
+		if len(cfg.Profiles) > 0 {
+			cfg.Default = cfg.Profiles[0].Name
+			ui.ShowInfo("Default profile switched to: %s", cfg.Default)
+		} else {
+			cfg.Default = ""
+		}
+	}
+
+	if err := config.SaveConfig(cfg); err != nil {
+		ui.ShowError("Failed to save config", err)
+		return
+	}
+
+	ui.ShowSuccess("Profile '%s' removed successfully!", name)
+}
+
+// RunConfigReset 重置配置项
+func RunConfigReset(args []string) {
+	if len(args) == 0 {
+		// 重置所有设置
+		RunDefaultBehaviorReset()
+		RunSkipPermissionsReset()
+		RunTerminalReset()
+		return
+	}
+
+	key := args[0]
+	switch key {
+	case "default-behavior", "defaultBehavior":
+		RunDefaultBehaviorReset()
+	case "skip-permissions", "skipPermissions":
+		RunSkipPermissionsReset()
+	case "terminal":
+		RunTerminalReset()
+	default:
+		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal")
+	}
+}
+
+// RunConfigList 列出配置键的可选值
+func RunConfigList(args []string) {
+	if len(args) == 0 {
+		fmt.Println("Available configuration keys:")
+		fmt.Println("  default-behavior  Startup directory behavior (current, last, home)")
+		fmt.Println("  skip-permissions  Global --dangerously-skip-permissions (true, false)")
+		fmt.Println("  terminal          Terminal emulator for sessions")
+		fmt.Println()
+		fmt.Println("Use 'codes config list <key>' to see available values for a key.")
+		return
+	}
+
+	key := args[0]
+	switch key {
+	case "default-behavior", "defaultBehavior":
+		fmt.Println("Available values for default-behavior:")
+		fmt.Println("  current  Use current working directory (default)")
+		fmt.Println("  last     Use last used directory")
+		fmt.Println("  home     Use home directory")
+	case "skip-permissions", "skipPermissions":
+		fmt.Println("Available values for skip-permissions:")
+		fmt.Println("  true     Enable --dangerously-skip-permissions globally")
+		fmt.Println("  false    Disable --dangerously-skip-permissions globally (default)")
+	case "terminal":
+		RunTerminalList()
+	default:
+		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal")
+	}
+}
+
+// RunTerminalReset 重置终端设置为平台默认
+func RunTerminalReset() {
+	old := config.GetTerminal()
+
+	if err := config.SetTerminal(""); err != nil {
+		ui.ShowError("Error saving config", err)
+		return
+	}
+
+	defaultTerminal := "terminal"
+	if runtime.GOOS == "windows" {
+		defaultTerminal = "auto"
+	}
+
+	ui.ShowSuccess("Terminal reset to: %s (platform default)", defaultTerminal)
+	if old != "" {
+		ui.ShowInfo("Previous: %s", old)
+	}
+}
+
+// RunProjectAdd2 解析 0/1/2 参数后调用 RunProjectAdd
+func RunProjectAdd2(args []string, remoteName string) {
+	var name, path string
+
+	switch len(args) {
+	case 0:
+		// 无参数：使用当前目录
+		cwd, err := os.Getwd()
+		if err != nil {
+			ui.ShowError("Failed to get current directory", err)
+			return
+		}
+		path = cwd
+		name = filepath.Base(cwd)
+	case 1:
+		// 1 个参数：用作路径，从目录名推导名称
+		absPath, err := filepath.Abs(args[0])
+		if err != nil {
+			ui.ShowError("Invalid path", err)
+			return
+		}
+		path = absPath
+		name = filepath.Base(absPath)
+	case 2:
+		// 2 个参数：原始行为
+		name = args[0]
+		path = args[1]
+	}
+
+	RunProjectAdd(name, path, remoteName)
+}
+
 // RunServe starts the MCP server mode.
 func RunServe() {
 	if err := mcpserver.RunServer(); err != nil {
@@ -1628,8 +1834,8 @@ func RunTerminalGet() {
 	fmt.Println("Current terminal emulator:")
 	ui.ShowInfo("  %s", current)
 	fmt.Println()
-	ui.ShowInfo("To change: codes terminal set <terminal>")
-	ui.ShowInfo("To list options: codes terminal list")
+	ui.ShowInfo("To change: codes config set terminal <terminal>")
+	ui.ShowInfo("To list options: codes config list terminal")
 }
 
 // RunTerminalList lists available terminal emulator options.
@@ -1683,11 +1889,11 @@ func RunTerminalList() {
 	fmt.Println()
 	ui.ShowInfo("You can also use any custom terminal command:")
 	if runtime.GOOS == "windows" {
-		ui.ShowInfo("  codes terminal set wt")
-		ui.ShowInfo("  codes terminal set pwsh")
+		ui.ShowInfo("  codes config set terminal wt")
+		ui.ShowInfo("  codes config set terminal pwsh")
 	} else {
-		ui.ShowInfo("  codes terminal set Alacritty")
-		ui.ShowInfo("  codes terminal set /usr/bin/xterm")
+		ui.ShowInfo("  codes config set terminal Alacritty")
+		ui.ShowInfo("  codes config set terminal /usr/bin/xterm")
 	}
 }
 

@@ -135,32 +135,21 @@ Initialize the CLI: install binary, set up shell completion, run health checks.
 codes init
 ```
 
-### `codes add`
+### `codes profile` (alias: `pf`)
 
-Interactively add a new API profile.
-
-```bash
-codes add
-```
-
-### `codes select`
-
-Display all profiles and interactively select one.
+Manage API profiles.
 
 ```bash
-codes select
+codes profile add              # interactively add a new profile
+codes profile select           # select active profile
+codes profile test             # test all profiles
+codes profile test work        # test specific profile
+codes profile list             # list all profiles
+codes profile remove work      # remove a profile
+codes pf list                  # alias shorthand
 ```
 
-### `codes test [profile-name]`
-
-Test API connectivity for all profiles or a specific one.
-
-```bash
-codes test          # test all
-codes test work     # test specific profile
-```
-
-### `codes start [path-or-project]`
+### `codes start [path]` (alias: `s`)
 
 Start Claude in a specific directory or project alias.
 
@@ -168,55 +157,36 @@ Start Claude in a specific directory or project alias.
 codes start .              # current directory
 codes start /path/to/dir   # specific path
 codes start my-project     # project alias
+codes s my-project         # alias shorthand
 ```
 
-### `codes project`
+### `codes project` (alias: `p`)
 
 Manage project aliases.
 
 ```bash
-codes project add my-app /path/to/my-app
+codes project add                          # add cwd as project (auto-name)
+codes project add /path/to/my-app          # add path (auto-name from dir)
+codes project add my-app /path/to/my-app   # add with explicit name
 codes project list
 codes project remove my-app
+codes p add .                              # alias shorthand
 ```
 
-### `codes terminal`
+### `codes config` (alias: `c`)
 
-Configure which terminal emulator to use for sessions.
-
-```bash
-codes terminal get            # show current
-codes terminal set iterm      # set to iTerm2
-codes terminal list           # list options
-```
-
-### `codes defaultbehavior`
-
-Control where Claude starts when no arguments are provided.
+Manage CLI configuration. Replaces the old `defaultbehavior`, `skippermissions`, and `terminal` commands.
 
 ```bash
-codes defaultbehavior get
-codes defaultbehavior set last    # current | last | home
-codes defaultbehavior reset
-```
-
-### `codes skippermissions`
-
-Manage the global `--dangerously-skip-permissions` flag.
-
-```bash
-codes skippermissions get
-codes skippermissions set true
-codes skippermissions reset
-```
-
-### `codes config`
-
-Manage global CLI configuration.
-
-```bash
-codes config get
-codes config set defaultBehavior last
+codes config get                              # show all settings
+codes config get default-behavior             # show specific setting
+codes config set default-behavior last        # current | last | home
+codes config set skip-permissions true        # true | false
+codes config set terminal iterm               # terminal emulator
+codes config list terminal                    # list available values
+codes config reset skip-permissions           # reset to default
+codes config reset                            # reset all settings
+codes c set terminal warp                     # alias shorthand
 ```
 
 ### `codes update`
@@ -235,14 +205,17 @@ Start MCP server over stdio.
 codes serve
 ```
 
-### `codes completion [shell]`
+### `codes remote` (alias: `r`)
 
-Generate shell completion scripts.
+Manage remote SSH hosts for running Claude Code remotely.
 
 ```bash
-source <(codes completion zsh)    # Zsh
-source <(codes completion bash)   # Bash
-codes completion fish | source    # Fish
+codes remote add myhost user@example.com
+codes remote list
+codes remote status myhost
+codes remote setup myhost
+codes remote ssh myhost
+codes r list                    # alias shorthand
 ```
 
 ### `codes version`

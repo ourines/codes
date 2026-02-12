@@ -24,19 +24,14 @@ func init() {
 	rootCmd.PersistentFlags().BoolVar(&jsonFlag, "json", false, "Output in JSON format")
 
 	rootCmd.AddCommand(commands.InitCmd)
-	rootCmd.AddCommand(commands.AddCmd)
-	rootCmd.AddCommand(commands.SelectCmd)
-	rootCmd.AddCommand(commands.TestCmd)
 	rootCmd.AddCommand(commands.UpdateCmd)
 	rootCmd.AddCommand(commands.VersionCmd)
 	rootCmd.AddCommand(commands.StartCmd)
+	rootCmd.AddCommand(commands.ProfileCmd)
 	rootCmd.AddCommand(commands.ProjectCmd)
 	rootCmd.AddCommand(commands.ConfigCmd)
-	rootCmd.AddCommand(commands.DefaultBehaviorCmd)
-	rootCmd.AddCommand(commands.SkipPermissionsCmd)
 	rootCmd.AddCommand(commands.CompletionCmd)
 	rootCmd.AddCommand(commands.ServeCmd)
-	rootCmd.AddCommand(commands.TerminalCmd)
 	rootCmd.AddCommand(commands.RemoteCmd)
 
 	// 设置默认运行时行为
