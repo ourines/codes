@@ -8,7 +8,10 @@ on:
 
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
 
     steps:
     - name: Checkout code
@@ -23,16 +26,36 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
-    - name: Build
+    - name: Build (Unix)
+      if: runner.os != 'Windows'
       run: go build -o codes ./cmd/codes
 
-    - name: Test basic functionality
+    - name: Build (Windows)
+      if: runner.os == 'Windows'
+      run: go build -o codes.exe ./cmd/codes
+
+    - name: Test basic functionality (Unix)
+      if: runner.os != 'Windows'
       run: |
         ./codes version
         ./codes --help
 
-    - name: Test configuration
+    - name: Test basic functionality (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        .\codes.exe version
+        .\codes.exe --help
+
+    - name: Test configuration (Unix)
+      if: runner.os != 'Windows'
       run: |
         ./codes add --help
         ./codes select --help
         ./codes completion --help
+
+    - name: Test configuration (Windows)
+      if: runner.os == 'Windows'
+      run: |
+        .\codes.exe add --help
+        .\codes.exe select --help
+        .\codes.exe completion --help

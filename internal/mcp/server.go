@@ -47,5 +47,25 @@ func RunServer() error {
 		Description: "Get detailed information about a project including git status and branch info",
 	}, getProjectInfoHandler)
 
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "list_remotes",
+		Description: "List all configured remote SSH hosts",
+	}, listRemotesHandler)
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "add_remote",
+		Description: "Add a new remote SSH host configuration",
+	}, addRemoteHandler)
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "remove_remote",
+		Description: "Remove a remote SSH host configuration by name",
+	}, removeRemoteHandler)
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "sync_remote",
+		Description: "Sync local API profiles and settings to a remote SSH host",
+	}, syncRemoteHandler)
+
 	return server.Run(context.Background(), &mcpsdk.StdioTransport{})
 }

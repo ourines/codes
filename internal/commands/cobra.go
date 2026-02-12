@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -239,10 +240,11 @@ var SkipPermissionsResetCmd = &cobra.Command{
 var ProjectAddCmd = &cobra.Command{
 	Use:   "add <name> <path>",
 	Short: "Add a project alias",
-	Long:  "Add a project alias for quick access to a directory",
+	Long:  "Add a project alias for quick access to a directory. Use --remote for remote projects.",
 	Args:  cobra.ExactArgs(2),
 	Run: func(cmd *cobra.Command, args []string) {
-		RunProjectAdd(args[0], args[1])
+		remoteName, _ := cmd.Flags().GetString("remote")
+		RunProjectAdd(args[0], args[1], remoteName)
 	},
 }
 
@@ -269,6 +271,7 @@ var ProjectListCmd = &cobra.Command{
 }
 
 func init() {
+	ProjectAddCmd.Flags().StringP("remote", "r", "", "Remote host name (for remote projects)")
 	ProjectCmd.AddCommand(ProjectAddCmd)
 	ProjectCmd.AddCommand(ProjectRemoveCmd)
 	ProjectCmd.AddCommand(ProjectListCmd)
@@ -287,6 +290,18 @@ func init() {
 	TerminalCmd.AddCommand(TerminalSetCmd)
 	TerminalCmd.AddCommand(TerminalGetCmd)
 	TerminalCmd.AddCommand(TerminalListCmd)
+
+	// Remote sub-commands
+	RemoteAddCmd.Flags().IntP("port", "p", 0, "SSH port")
+	RemoteAddCmd.Flags().StringP("identity", "i", "", "SSH identity file")
+	RemoteCmd.AddCommand(RemoteAddCmd)
+	RemoteCmd.AddCommand(RemoteRemoveCmd)
+	RemoteCmd.AddCommand(RemoteListCmd)
+	RemoteCmd.AddCommand(RemoteStatusCmd)
+	RemoteCmd.AddCommand(RemoteInstallCmd)
+	RemoteCmd.AddCommand(RemoteSyncCmd)
+	RemoteCmd.AddCommand(RemoteSetupCmd)
+	RemoteCmd.AddCommand(RemoteSSHCmd)
 }
 
 // CompletionCmd generates shell completion scripts
@@ -299,11 +314,29 @@ var TerminalCmd = &cobra.Command{
 
 // TerminalSetCmd sets the terminal emulator
 var TerminalSetCmd = &cobra.Command{
-	Use:       "set <terminal>",
-	Short:     "Set the terminal emulator",
-	Long:      "Set which terminal emulator to use: 'terminal' (Terminal.app), 'iterm' (iTerm2), 'warp' (Warp), or a custom command",
-	Args:      cobra.ExactArgs(1),
-	ValidArgs: []string{"terminal", "iterm", "warp"},
+	Use:   "set <terminal>",
+	Short: "Set the terminal emulator",
+	Long:  "Set which terminal emulator to use for sessions. Run 'codes terminal list' to see available options.",
+	Args:  cobra.ExactArgs(1),
+	ValidArgsFunction: func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+		if len(args) > 0 {
+			return nil, cobra.ShellCompDirectiveNoFileComp
+		}
+		if runtime.GOOS == "windows" {
+			return []string{
+				"auto\tAuto-detect (Windows Terminal > PowerShell)",
+				"wt\tWindows Terminal",
+				"powershell\tWindows PowerShell",
+				"pwsh\tPowerShell Core",
+				"cmd\tCommand Prompt",
+			}, cobra.ShellCompDirectiveNoFileComp
+		}
+		return []string{
+			"terminal\tTerminal.app (macOS default)",
+			"iterm\tiTerm2",
+			"warp\tWarp",
+		}, cobra.ShellCompDirectiveNoFileComp
+	},
 	Run: func(cmd *cobra.Command, args []string) {
 		RunTerminalSet(args[0])
 	},
@@ -373,6 +406,112 @@ var ServeCmd = &cobra.Command{
 	},
 }
 
+// RemoteCmd represents the remote command
+var RemoteCmd = &cobra.Command{
+	Use:   "remote",
+	Short: "Manage remote SSH hosts",
+	Long:  "Add, remove, list, and manage remote SSH hosts for running Claude Code remotely",
+}
+
+// RemoteAddCmd adds a remote host
+var RemoteAddCmd = &cobra.Command{
+	Use:   "add <name> <[user@]host>",
+	Short: "Add a remote host",
+	Long:  "Add a remote SSH host configuration for remote Claude Code sessions",
+	Args:  cobra.ExactArgs(2),
+	Run: func(cmd *cobra.Command, args []string) {
+		port, _ := cmd.Flags().GetInt("port")
+		identity, _ := cmd.Flags().GetString("identity")
+		RunRemoteAdd(args[0], args[1], port, identity)
+	},
+}
+
+// RemoteRemoveCmd removes a remote host
+var RemoteRemoveCmd = &cobra.Command{
+	Use:               "remove <name>",
+	Short:             "Remove a remote host",
+	Long:              "Remove a remote SSH host configuration",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeRemoteNames,
+	Run: func(cmd *cobra.Command, args []string) {
+		RunRemoteRemove(args[0])
+	},
+}
+
+// RemoteListCmd lists all remote hosts
+var RemoteListCmd = &cobra.Command{
+	Use:   "list",
+	Short: "List remote hosts",
+	Long:  "List all configured remote SSH hosts",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunRemoteList()
+	},
+}
+
+// RemoteStatusCmd shows remote host status
+var RemoteStatusCmd = &cobra.Command{
+	Use:               "status <name>",
+	Short:             "Check remote host status",
+	Long:              "Check SSH connectivity and installed tools on a remote host",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeRemoteNames,
+	Run: func(cmd *cobra.Command, args []string) {
+		RunRemoteStatus(args[0])
+	},
+}
+
+// RemoteInstallCmd installs codes on a remote host
+var RemoteInstallCmd = &cobra.Command{
+	Use:               "install <name>",
+	Short:             "Install codes on remote host",
+	Long:              "Download and install the codes binary on a remote SSH host",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeRemoteNames,
+	Run: func(cmd *cobra.Command, args []string) {
+		RunRemoteInstall(args[0])
+	},
+}
+
+// RemoteSyncCmd syncs profiles to a remote host
+var RemoteSyncCmd = &cobra.Command{
+	Use:               "sync <name>",
+	Short:             "Sync profiles to remote host",
+	Long:              "Upload local API profiles and settings to a remote host",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeRemoteNames,
+	Run: func(cmd *cobra.Command, args []string) {
+		RunRemoteSync(args[0])
+	},
+}
+
+// RemoteSetupCmd runs install + sync on a remote host
+var RemoteSetupCmd = &cobra.Command{
+	Use:               "setup <name>",
+	Short:             "Full setup on remote host",
+	Long:              "Install codes and sync profiles to a remote host (install + sync)",
+	Args:              cobra.ExactArgs(1),
+	ValidArgsFunction: completeRemoteNames,
+	Run: func(cmd *cobra.Command, args []string) {
+		RunRemoteSetup(args[0])
+	},
+}
+
+// RemoteSSHCmd opens an SSH session on a remote host
+var RemoteSSHCmd = &cobra.Command{
+	Use:               "ssh <name> [project]",
+	Short:             "Open remote Claude Code session",
+	Long:              "SSH into a remote host and start codes. Optionally specify a project directory.",
+	Args:              cobra.RangeArgs(1, 2),
+	ValidArgsFunction: completeRemoteNames,
+	Run: func(cmd *cobra.Command, args []string) {
+		project := ""
+		if len(args) > 1 {
+			project = args[1]
+		}
+		RunRemoteSSH(args[0], project)
+	},
+}
+
 // completeProfileNames provides dynamic completion for API profile names
 func completeProfileNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
 	cfg, err := config.LoadConfig()
@@ -400,4 +539,17 @@ func completeProjectNames(cmd *cobra.Command, args []string, toComplete string) 
 		return names, cobra.ShellCompDirectiveNoFileComp
 	}
 	return names, cobra.ShellCompDirectiveDefault
+}
+
+// completeRemoteNames provides dynamic completion for remote host names.
+func completeRemoteNames(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+	remotes, err := config.ListRemotes()
+	if err != nil {
+		return nil, cobra.ShellCompDirectiveNoFileComp
+	}
+	var names []string
+	for _, r := range remotes {
+		names = append(names, r.Name)
+	}
+	return names, cobra.ShellCompDirectiveNoFileComp
 }

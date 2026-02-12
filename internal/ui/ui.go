@@ -39,11 +39,11 @@ func ShowSuccess(format string, args ...interface{}) {
 	fmt.Printf(" ✓ %s\n", fmt.Sprintf(format, args...))
 }
 
-func ShowError(format string, err error) {
+func ShowError(msg string, err error) {
 	if err != nil {
-		fmt.Printf(" ✗ %s: %v\n", fmt.Sprintf(format), err)
+		fmt.Printf(" ✗ %s: %v\n", msg, err)
 	} else {
-		fmt.Printf(" ✗ %s\n", fmt.Sprintf(format))
+		fmt.Printf(" ✗ %s\n", msg)
 	}
 }
 

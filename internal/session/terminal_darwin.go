@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"codes/internal/config"
 )
 
 // escapeAppleScript escapes a string for safe embedding in AppleScript double-quoted strings.
@@ -121,4 +123,49 @@ func focusTerminalWindow(terminal string) {
 		}
 	}
 	exec.Command("osascript", "-e", fmt.Sprintf(`tell application "%s" to activate`, escapeAppleScript(app))).Run()
+}
+
+// openRemoteInTerminal opens a new terminal window with an SSH session to a remote host.
+func openRemoteInTerminal(sessionID string, host *config.RemoteHost, project string, terminal string) (int, error) {
+	script, scriptPath := buildRemoteScript(sessionID, host, project)
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		return 0, err
+	}
+
+	// Remove stale PID file
+	pidFile := pidFilePath(sessionID)
+	os.Remove(pidFile)
+
+	// Launch in the selected terminal
+	var err error
+	switch strings.ToLower(terminal) {
+	case "iterm", "iterm2":
+		err = openITerm(scriptPath, sessionID)
+	case "warp":
+		err = openWarp(scriptPath)
+	case "", "terminal":
+		err = openTerminalApp(scriptPath)
+	default:
+		err = openCustom(terminal, scriptPath)
+	}
+
+	if err != nil {
+		os.Remove(scriptPath)
+		return 0, err
+	}
+
+	// Wait for PID file to appear (up to 5 seconds)
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		data, err := os.ReadFile(pidFile)
+		if err == nil {
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err == nil && pid > 0 {
+				return pid, nil
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("timed out waiting for session PID")
 }

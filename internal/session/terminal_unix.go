@@ -5,13 +5,11 @@ package session
 import (
 	"fmt"
 	"os"
-	"regexp"
 	"strings"
 	"syscall"
-)
 
-// validEnvVarName matches valid POSIX environment variable names.
-var validEnvVarName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
+	"codes/internal/config"
+)
 
 // isProcessAlive checks if a process with the given PID is still running.
 func isProcessAlive(pid int) bool {
@@ -78,6 +76,57 @@ func buildScript(name, dir string, args []string, env map[string]string) (script
 	} else {
 		b.WriteString("claude\n")
 	}
+
+	return b.String(), scriptPath
+}
+
+// buildRemoteScript creates a shell script that SSHs into a remote host and runs codes.
+func buildRemoteScript(name string, host *config.RemoteHost, project string) (script string, scriptPath string) {
+	pidFile := pidFilePath(name)
+	scriptPath = fmt.Sprintf("%s/codes-%s.sh", os.TempDir(), name)
+
+	var b strings.Builder
+	b.WriteString("#!/bin/bash\n")
+	b.WriteString(fmt.Sprintf("# codes remote session: %s\n\n", name))
+
+	// Cleanup on exit
+	b.WriteString(fmt.Sprintf("cleanup() { rm -f '%s' '%s'; }\n", pidFile, scriptPath))
+	b.WriteString("trap cleanup EXIT\n\n")
+
+	// Write PID file
+	b.WriteString(fmt.Sprintf("echo $$ > '%s'\n\n", pidFile))
+
+	// Set window title
+	b.WriteString(fmt.Sprintf("echo -ne '\\033]0;codes: %s (remote)\\007'\n\n", name))
+
+	// Build SSH command
+	var sshArgs []string
+	sshArgs = append(sshArgs, "-t") // force TTY
+	sshArgs = append(sshArgs, "-o", "StrictHostKeyChecking=accept-new")
+	if host.Port != 0 {
+		sshArgs = append(sshArgs, "-p", fmt.Sprintf("%d", host.Port))
+	}
+	if host.Identity != "" {
+		identity := host.Identity
+		if strings.HasPrefix(identity, "~/") {
+			identity = "$HOME" + identity[1:]
+		}
+		sshArgs = append(sshArgs, "-i", identity)
+	}
+	sshArgs = append(sshArgs, host.UserAtHost())
+
+	// Remote command
+	remoteCmd := "codes"
+	if project != "" {
+		escaped := strings.ReplaceAll(project, "'", "'\\''")
+		remoteCmd = fmt.Sprintf("cd '%s' && codes", escaped)
+	}
+
+	quotedArgs := make([]string, len(sshArgs))
+	for i, a := range sshArgs {
+		quotedArgs[i] = fmt.Sprintf("'%s'", strings.ReplaceAll(a, "'", "'\\''"))
+	}
+	b.WriteString(fmt.Sprintf("ssh %s '%s'\n", strings.Join(quotedArgs, " "), strings.ReplaceAll(remoteCmd, "'", "'\\''")))
 
 	return b.String(), scriptPath
 }

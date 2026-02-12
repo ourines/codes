@@ -9,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"codes/internal/config"
 )
 
 // terminalEmulators lists common Linux terminal emulators and their launch arguments.
@@ -86,3 +88,58 @@ func openInTerminal(sessionID, dir string, args []string, env map[string]string,
 
 // focusTerminalWindow is a no-op on Linux (window focusing is WM-dependent).
 func focusTerminalWindow(terminal string) {}
+
+// openRemoteInTerminal opens a new terminal window with an SSH session to a remote host.
+func openRemoteInTerminal(sessionID string, host *config.RemoteHost, project string, terminal string) (int, error) {
+	script, scriptPath := buildRemoteScript(sessionID, host, project)
+
+	if err := os.WriteFile(scriptPath, []byte(script), 0755); err != nil {
+		return 0, err
+	}
+
+	pidFile := pidFilePath(sessionID)
+	os.Remove(pidFile)
+
+	var started bool
+
+	if terminal != "" {
+		cmd := exec.Command(terminal, "-e", "bash", scriptPath)
+		if err := cmd.Start(); err == nil {
+			go cmd.Wait()
+			started = true
+		}
+	}
+
+	if !started {
+		for _, te := range terminalEmulators {
+			if _, err := exec.LookPath(te.name); err != nil {
+				continue
+			}
+			cmd := exec.Command(te.name, te.args(scriptPath)...)
+			if err := cmd.Start(); err != nil {
+				continue
+			}
+			go cmd.Wait()
+			started = true
+			break
+		}
+	}
+
+	if !started {
+		os.Remove(scriptPath)
+		return 0, fmt.Errorf("no terminal emulator found")
+	}
+
+	for i := 0; i < 50; i++ {
+		time.Sleep(100 * time.Millisecond)
+		data, err := os.ReadFile(pidFile)
+		if err == nil {
+			pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
+			if err == nil && pid > 0 {
+				return pid, nil
+			}
+		}
+	}
+
+	return 0, fmt.Errorf("timed out waiting for session PID")
+}

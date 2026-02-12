@@ -2,7 +2,6 @@
 config.json
 
 # Binary
-codes
 /codes
-codes
+/codes.exe
 .serena/

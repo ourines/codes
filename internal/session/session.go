@@ -7,10 +7,15 @@ import (
 	"regexp"
 	"sync"
 	"time"
+
+	"codes/internal/config"
 )
 
 // safeIDPattern matches only characters safe for file paths, shell scripts, and AppleScript.
 var safeIDPattern = regexp.MustCompile(`[^a-zA-Z0-9_\-.]`)
+
+// validEnvVarName matches valid environment variable names.
+var validEnvVarName = regexp.MustCompile(`^[a-zA-Z_][a-zA-Z0-9_]*$`)
 
 // sanitizeID replaces unsafe characters in a session/project name with underscores.
 func sanitizeID(name string) string {
@@ -255,4 +260,43 @@ func (m *Manager) CleanExited() {
 			delete(m.sessions, id)
 		}
 	}
+}
+
+// StartRemoteSession launches a Claude Code session on a remote host in a new terminal window.
+func (m *Manager) StartRemoteSession(name string, host *config.RemoteHost, project string) (*Session, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	id := m.nextSessionID("remote-" + name)
+
+	pid, err := openRemoteInTerminal(id, host, project, m.terminal)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open remote terminal: %w", err)
+	}
+
+	s := &Session{
+		ID:          id,
+		ProjectName: "remote:" + name,
+		ProjectPath: host.UserAtHost(),
+		Status:      StatusRunning,
+		PID:         pid,
+		StartedAt:   time.Now(),
+	}
+	m.sessions[id] = s
+
+	// Monitor process exit in background
+	go func() {
+		for {
+			time.Sleep(2 * time.Second)
+			if !isProcessAlive(pid) {
+				s.mu.Lock()
+				s.Status = StatusExited
+				s.mu.Unlock()
+				os.Remove(pidFilePath(id))
+				return
+			}
+		}
+	}()
+
+	return s, nil
 }
