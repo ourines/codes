@@ -19,6 +19,13 @@ import (
 	"codes/internal/ui"
 )
 
+// Version information, set via ldflags at build time.
+var (
+	Version = "dev"
+	Commit  = "unknown"
+	Date    = "unknown"
+)
+
 // min returns the minimum of two integers
 func min(a, b int) int {
 	if a < b {
@@ -28,7 +35,7 @@ func min(a, b int) int {
 }
 
 func RunVersion() {
-	fmt.Printf("codes version dev (built unknown)\n")
+	fmt.Printf("codes version %s (commit %s, built %s)\n", Version, Commit, Date)
 }
 
 func RunSelect() {
