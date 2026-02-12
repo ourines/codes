@@ -208,7 +208,5 @@ func (m profileFormModel) View() string {
 		b.WriteString(statusErrorStyle.Render("⚠ "+m.err) + "\n\n")
 	}
 
-	b.WriteString(formHintStyle.Render("Tab: switch fields  Space: toggle  Enter: add  Esc: cancel"))
-
 	return b.String()
 }

@@ -15,6 +15,7 @@ import (
 	"codes/internal/config"
 	mcpserver "codes/internal/mcp"
 	"codes/internal/output"
+	"codes/internal/remote"
 	"codes/internal/ui"
 )
 
@@ -483,12 +484,16 @@ func installBinary() (string, bool) {
 
 	switch runtime.GOOS {
 	case "windows":
-		homeDir, err := os.UserHomeDir()
-		if err != nil {
-			ui.ShowError("Failed to get home directory", err)
-			return "", false
+		localAppData := os.Getenv("LOCALAPPDATA")
+		if localAppData == "" {
+			homeDir, err := os.UserHomeDir()
+			if err != nil {
+				ui.ShowError("Failed to get home directory", err)
+				return "", false
+			}
+			localAppData = filepath.Join(homeDir, "AppData", "Local")
 		}
-		targetDir = filepath.Join(homeDir, "go", "bin")
+		targetDir = filepath.Join(localAppData, "codes")
 		installPath = filepath.Join(targetDir, "codes.exe")
 	default:
 		if ui.CanWriteTo("/usr/local/bin") {
@@ -541,7 +546,9 @@ func installBinary() (string, bool) {
 
 	ui.ShowSuccess("codes installed to %s", installPath)
 
-	if runtime.GOOS != "windows" && targetDir != "/usr/local/bin" {
+	if runtime.GOOS == "windows" {
+		ensureInPath(targetDir)
+	} else if targetDir != "/usr/local/bin" {
 		ui.ShowWarning("  Make sure %s is in your PATH", targetDir)
 	}
 
@@ -550,6 +557,10 @@ func installBinary() (string, bool) {
 
 // installShellCompletion detects the user's shell and installs completion.
 func installShellCompletion() bool {
+	if runtime.GOOS == "windows" {
+		return installPowerShellCompletion()
+	}
+
 	shellPath := os.Getenv("SHELL")
 	if shellPath == "" {
 		ui.ShowWarning("Could not detect shell, skipping completion setup")
@@ -628,21 +639,37 @@ func RunInit() {
 
 	allGood := true
 
-	// 1. Install binary to system PATH
+	// 0. Check if Git is installed
+	ui.ShowInfo("Checking Git installation...")
+	if !checkGitAvailable() {
+		allGood = false
+	}
+	fmt.Println()
+
+	// 1. Check PowerShell execution policy (Windows only, no-op on other platforms)
+	if runtime.GOOS == "windows" {
+		ui.ShowInfo("Checking PowerShell execution policy...")
+		if !checkExecutionPolicy() {
+			allGood = false
+		}
+		fmt.Println()
+	}
+
+	// 2. Install binary to system PATH
 	ui.ShowInfo("Installing codes CLI...")
 	if path, _ := installBinary(); path == "" {
 		allGood = false
 	}
 	fmt.Println()
 
-	// 2. Install shell completion
+	// 3. Install shell completion
 	ui.ShowInfo("Setting up shell completion...")
 	if !installShellCompletion() {
 		allGood = false
 	}
 	fmt.Println()
 
-	// 3. Check if Claude CLI is installed
+	// 4. Check if Claude CLI is installed
 	ui.ShowInfo("Checking Claude CLI installation...")
 	if _, err := exec.LookPath("claude"); err != nil {
 		ui.ShowError("Claude CLI not found", nil)
@@ -661,7 +688,7 @@ func RunInit() {
 	}
 	fmt.Println()
 
-	// 4. Check for existing environment variables
+	// 5. Check for existing environment variables
 	ui.ShowInfo("Checking for existing Claude configuration...")
 	baseURL := os.Getenv("ANTHROPIC_BASE_URL")
 	authToken := os.Getenv("ANTHROPIC_AUTH_TOKEN")
@@ -683,7 +710,7 @@ func RunInit() {
 	}
 	fmt.Println()
 
-	// 5. Check if config file exists
+	// 6. Check if config file exists
 	ui.ShowInfo("Checking configuration file...")
 	configExists := false
 	if _, err := os.Stat(config.ConfigPath); err == nil {
@@ -754,7 +781,7 @@ func RunInit() {
 		ui.ShowSuccess("Configuration file exists")
 		ui.ShowInfo("  Location: %s", config.ConfigPath)
 
-		// 6. Validate configuration
+		// 7. Validate configuration
 		cfg, err := config.LoadConfig()
 		if err != nil {
 			ui.ShowError("Failed to load configuration", err)
@@ -869,11 +896,14 @@ func RunInit() {
 		ui.ShowWarning("Some checks failed. Please review the messages above.")
 		fmt.Println()
 		ui.ShowInfo("Suggested actions:")
+		if _, err := exec.LookPath("git"); err != nil {
+			ui.ShowInfo("  1. Install Git")
+		}
 		if _, err := exec.LookPath("claude"); err != nil {
-			ui.ShowInfo("  1. Install Claude CLI: codes update")
+			ui.ShowInfo("  2. Install Claude CLI: codes update")
 		}
 		if _, err := os.Stat(config.ConfigPath); err != nil {
-			ui.ShowInfo("  2. Add a configuration: codes add")
+			ui.ShowInfo("  3. Add a configuration: codes add")
 		}
 	}
 }
@@ -916,8 +946,22 @@ func RunStart(args []string) {
 		input := args[0]
 
 		// 检查是否是项目别名
-		if projectPath, exists := config.GetProjectPath(input); exists {
-			targetDir = projectPath
+		if project, exists := config.GetProject(input); exists {
+			// Remote project → SSH
+			if project.Remote != "" {
+				host, ok := config.GetRemote(project.Remote)
+				if !ok {
+					ui.ShowError(fmt.Sprintf("Remote '%s' not found for project '%s'", project.Remote, input), nil)
+					os.Exit(1)
+				}
+				ui.ShowInfo("Connecting to remote project: %s @ %s", input, host.UserAtHost())
+				if err := remote.RunSSHInteractive(host, fmt.Sprintf("cd %s && codes", project.Path)); err != nil {
+					ui.ShowError("SSH session failed", err)
+					os.Exit(1)
+				}
+				return
+			}
+			targetDir = project.Path
 			ui.ShowInfo("Using project: %s -> %s", input, targetDir)
 		} else {
 			// 作为路径处理
@@ -984,22 +1028,41 @@ func RunStart(args []string) {
 }
 
 // RunProjectAdd 添加项目别名
-func RunProjectAdd(name, path string) {
-	// 转换为绝对路径
+func RunProjectAdd(name, path string, remoteName string) {
+	entry := config.ProjectEntry{Path: path, Remote: remoteName}
+
+	if remoteName != "" {
+		// Remote project — verify remote exists, skip local path validation
+		if _, ok := config.GetRemote(remoteName); !ok {
+			ui.ShowError(fmt.Sprintf("Remote '%s' not found. Add it first with: codes remote add", remoteName), nil)
+			return
+		}
+
+		if err := config.AddProjectEntry(name, entry); err != nil {
+			ui.ShowError("Failed to add project", err)
+			return
+		}
+
+		ui.ShowSuccess("Remote project '%s' added successfully!", name)
+		ui.ShowInfo("Path: %s (on %s)", path, remoteName)
+		ui.ShowInfo("Usage: codes start %s", name)
+		return
+	}
+
+	// Local project — validate path
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		ui.ShowError("Invalid path", err)
 		return
 	}
 
-	// 验证目录是否存在
 	if _, err := os.Stat(absPath); os.IsNotExist(err) {
 		ui.ShowError("Directory does not exist", err)
 		return
 	}
 
-	// 添加项目
-	if err := config.AddProject(name, absPath); err != nil {
+	entry.Path = absPath
+	if err := config.AddProjectEntry(name, entry); err != nil {
 		ui.ShowError("Failed to add project", err)
 		return
 	}
@@ -1040,8 +1103,8 @@ func RunProjectList() {
 
 	if output.JSONMode {
 		infos := make([]config.ProjectInfo, 0, len(projects))
-		for name, path := range projects {
-			infos = append(infos, config.GetProjectInfo(name, path))
+		for name, entry := range projects {
+			infos = append(infos, config.GetProjectInfoFromEntry(name, entry))
 		}
 		output.Print(infos, nil)
 		return
@@ -1058,12 +1121,13 @@ func RunProjectList() {
 	fmt.Println()
 
 	i := 1
-	for name, path := range projects {
-		// 检查目录是否仍然存在
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			ui.ShowWarning("%d. %s -> %s (not found)", i, name, path)
+	for name, entry := range projects {
+		if entry.Remote != "" {
+			ui.ShowInfo("%d. %s -> %s @ %s", i, name, entry.Path, entry.Remote)
+		} else if _, err := os.Stat(entry.Path); os.IsNotExist(err) {
+			ui.ShowWarning("%d. %s -> %s (not found)", i, name, entry.Path)
 		} else {
-			ui.ShowInfo("%d. %s -> %s", i, name, path)
+			ui.ShowInfo("%d. %s -> %s", i, name, entry.Path)
 		}
 		i++
 	}
@@ -1499,7 +1563,11 @@ func RunServe() {
 func RunTerminalSet(terminal string) {
 	old := config.GetTerminal()
 	if old == "" {
-		old = "terminal"
+		if runtime.GOOS == "windows" {
+			old = "auto"
+		} else {
+			old = "terminal"
+		}
 	}
 
 	if err := config.SetTerminal(terminal); err != nil {
@@ -1520,6 +1588,16 @@ func RunTerminalSet(terminal string) {
 		ui.ShowInfo("Sessions will open in iTerm2")
 	case "warp":
 		ui.ShowInfo("Sessions will open in Warp")
+	case "auto":
+		ui.ShowInfo("Sessions will open in the best available terminal")
+	case "wt":
+		ui.ShowInfo("Sessions will open in Windows Terminal")
+	case "powershell":
+		ui.ShowInfo("Sessions will open in Windows PowerShell")
+	case "pwsh":
+		ui.ShowInfo("Sessions will open in PowerShell Core")
+	case "cmd":
+		ui.ShowInfo("Sessions will open in Command Prompt")
 	default:
 		ui.ShowInfo("Sessions will open with: %s", terminal)
 	}
@@ -1542,20 +1620,41 @@ func RunTerminalGet() {
 // RunTerminalList lists available terminal emulator options.
 func RunTerminalList() {
 	current := config.GetTerminal()
-	if current == "" {
-		current = "terminal"
-	}
 
 	fmt.Println("Available terminal emulators:")
 	fmt.Println()
 
-	options := []struct {
+	var options []struct {
 		name string
 		desc string
-	}{
-		{"terminal", "macOS Terminal.app (default)"},
-		{"iterm", "iTerm2"},
-		{"warp", "Warp"},
+	}
+
+	if runtime.GOOS == "windows" {
+		if current == "" {
+			current = "auto"
+		}
+		options = []struct {
+			name string
+			desc string
+		}{
+			{"auto", "Auto-detect (Windows Terminal > PowerShell)"},
+			{"wt", "Windows Terminal"},
+			{"powershell", "Windows PowerShell"},
+			{"pwsh", "PowerShell Core"},
+			{"cmd", "Command Prompt"},
+		}
+	} else {
+		if current == "" {
+			current = "terminal"
+		}
+		options = []struct {
+			name string
+			desc string
+		}{
+			{"terminal", "macOS Terminal.app (default)"},
+			{"iterm", "iTerm2"},
+			{"warp", "Warp"},
+		}
 	}
 
 	for _, opt := range options {
@@ -1568,6 +1667,274 @@ func RunTerminalList() {
 
 	fmt.Println()
 	ui.ShowInfo("You can also use any custom terminal command:")
-	ui.ShowInfo("  codes terminal set Alacritty")
-	ui.ShowInfo("  codes terminal set /usr/bin/xterm")
+	if runtime.GOOS == "windows" {
+		ui.ShowInfo("  codes terminal set wt")
+		ui.ShowInfo("  codes terminal set pwsh")
+	} else {
+		ui.ShowInfo("  codes terminal set Alacritty")
+		ui.ShowInfo("  codes terminal set /usr/bin/xterm")
+	}
+}
+
+// parseSSHAddress parses "user@host" or "host" into user and host parts.
+func parseSSHAddress(address string) (user, host string) {
+	if i := strings.Index(address, "@"); i >= 0 {
+		return address[:i], address[i+1:]
+	}
+	return "", address
+}
+
+// RunRemoteAdd adds a new remote host.
+func RunRemoteAdd(name, address string, port int, identity string) {
+	user, host := parseSSHAddress(address)
+
+	rh := config.RemoteHost{
+		Name:     name,
+		Host:     host,
+		User:     user,
+		Port:     port,
+		Identity: identity,
+	}
+
+	if output.JSONMode {
+		if err := config.AddRemote(rh); err != nil {
+			output.PrintError(err)
+			return
+		}
+		output.Print(map[string]interface{}{"added": true, "name": name}, nil)
+		return
+	}
+
+	if err := config.AddRemote(rh); err != nil {
+		ui.ShowError("Failed to add remote", err)
+		return
+	}
+
+	ui.ShowSuccess("Remote '%s' added successfully!", name)
+	ui.ShowInfo("Host: %s", rh.UserAtHost())
+	if port != 0 {
+		ui.ShowInfo("Port: %d", port)
+	}
+	if identity != "" {
+		ui.ShowInfo("Identity: %s", identity)
+	}
+}
+
+// RunRemoteRemove removes a remote host.
+func RunRemoteRemove(name string) {
+	if output.JSONMode {
+		if err := config.RemoveRemote(name); err != nil {
+			output.PrintError(err)
+			return
+		}
+		output.Print(map[string]interface{}{"removed": true, "name": name}, nil)
+		return
+	}
+
+	if err := config.RemoveRemote(name); err != nil {
+		ui.ShowError("Failed to remove remote", err)
+		return
+	}
+	ui.ShowSuccess("Remote '%s' removed", name)
+}
+
+// RunRemoteList lists all remote hosts.
+func RunRemoteList() {
+	remotes, err := config.ListRemotes()
+	if err != nil {
+		if output.JSONMode {
+			output.PrintError(err)
+			return
+		}
+		ui.ShowError("Failed to list remotes", err)
+		return
+	}
+
+	if output.JSONMode {
+		output.Print(remotes, nil)
+		return
+	}
+
+	if len(remotes) == 0 {
+		ui.ShowInfo("No remote hosts configured")
+		ui.ShowInfo("Add a remote with: codes remote add <name> <[user@]host>")
+		return
+	}
+
+	fmt.Println()
+	ui.ShowHeader("Remote Hosts")
+	fmt.Println()
+
+	for i, r := range remotes {
+		info := r.UserAtHost()
+		if r.Port != 0 {
+			info += fmt.Sprintf(":%d", r.Port)
+		}
+		ui.ShowInfo("%d. %s → %s", i+1, r.Name, info)
+	}
+
+	fmt.Println()
+	ui.ShowInfo("Check status with: codes remote status <name>")
+}
+
+// RunRemoteStatus shows the status of a remote host.
+func RunRemoteStatus(name string) {
+	host, ok := config.GetRemote(name)
+	if !ok {
+		if output.JSONMode {
+			output.PrintError(fmt.Errorf("remote %q not found", name))
+			return
+		}
+		ui.ShowError(fmt.Sprintf("Remote '%s' not found", name), nil)
+		return
+	}
+
+	if !output.JSONMode {
+		ui.ShowInfo("Checking %s (%s)...", name, host.UserAtHost())
+	}
+
+	// Test connection
+	if err := remote.TestConnection(host); err != nil {
+		if output.JSONMode {
+			output.PrintError(err)
+			return
+		}
+		ui.ShowError("Connection failed", err)
+		return
+	}
+
+	status, err := remote.CheckRemoteStatus(host)
+	if err != nil {
+		if output.JSONMode {
+			output.PrintError(err)
+			return
+		}
+		ui.ShowError("Failed to check status", err)
+		return
+	}
+
+	if output.JSONMode {
+		output.Print(status, nil)
+		return
+	}
+
+	fmt.Println()
+	ui.ShowSuccess("Connection: OK")
+	ui.ShowInfo("OS: %s", status.OS)
+	ui.ShowInfo("Arch: %s", status.Arch)
+
+	if status.CodesInstalled {
+		ui.ShowSuccess("codes: installed (%s)", status.CodesVersion)
+	} else {
+		ui.ShowWarning("codes: not installed")
+	}
+
+	if status.ClaudeInstalled {
+		ui.ShowSuccess("claude: installed")
+	} else {
+		ui.ShowWarning("claude: not installed")
+	}
+}
+
+// RunRemoteInstall installs codes on a remote host.
+func RunRemoteInstall(name string) {
+	host, ok := config.GetRemote(name)
+	if !ok {
+		ui.ShowError(fmt.Sprintf("Remote '%s' not found", name), nil)
+		return
+	}
+
+	ui.ShowLoading("Installing codes on %s...", host.UserAtHost())
+
+	out, err := remote.InstallOnRemote(host)
+	if err != nil {
+		ui.ShowError("Installation failed", err)
+		return
+	}
+	if out != "" {
+		fmt.Println(out)
+	}
+
+	ui.ShowSuccess("codes installed on %s!", host.UserAtHost())
+}
+
+// RunRemoteSync syncs profiles to a remote host.
+func RunRemoteSync(name string) {
+	host, ok := config.GetRemote(name)
+	if !ok {
+		ui.ShowError(fmt.Sprintf("Remote '%s' not found", name), nil)
+		return
+	}
+
+	ui.ShowLoading("Syncing profiles to %s...", host.UserAtHost())
+
+	if err := remote.SyncProfiles(host); err != nil {
+		ui.ShowError("Sync failed", err)
+		return
+	}
+
+	ui.ShowSuccess("Profiles synced to %s!", host.UserAtHost())
+}
+
+// RunRemoteSetup runs install + sync on a remote host.
+func RunRemoteSetup(name string) {
+	host, ok := config.GetRemote(name)
+	if !ok {
+		ui.ShowError(fmt.Sprintf("Remote '%s' not found", name), nil)
+		return
+	}
+
+	// Step 1: Install codes
+	ui.ShowLoading("Installing codes on %s...", host.UserAtHost())
+	if _, err := remote.InstallOnRemote(host); err != nil {
+		ui.ShowError("Installation failed", err)
+		return
+	}
+	ui.ShowSuccess("codes installed!")
+
+	// Step 2: Install Claude CLI
+	ui.ShowLoading("Installing Claude CLI...")
+	out, err := remote.InstallClaudeOnRemote(host)
+	if err != nil {
+		ui.ShowWarning("Claude CLI: %v", err)
+	} else {
+		if strings.Contains(out, "already installed") {
+			ui.ShowSuccess("Claude CLI already installed")
+		} else {
+			ui.ShowSuccess("Claude CLI installed!")
+		}
+	}
+
+	// Step 3: Sync profiles
+	ui.ShowLoading("Syncing profiles...")
+	if err := remote.SyncProfiles(host); err != nil {
+		ui.ShowError("Sync failed", err)
+		return
+	}
+	ui.ShowSuccess("Profiles synced!")
+
+	fmt.Println()
+	ui.ShowSuccess("Remote '%s' is ready!", name)
+	ui.ShowInfo("Connect with: codes remote ssh %s", name)
+}
+
+// RunRemoteSSH opens an interactive SSH session on the remote host.
+func RunRemoteSSH(name string, project string) {
+	host, ok := config.GetRemote(name)
+	if !ok {
+		ui.ShowError(fmt.Sprintf("Remote '%s' not found", name), nil)
+		return
+	}
+
+	// Build remote command
+	var cmd string
+	if project != "" {
+		cmd = fmt.Sprintf("cd %s && codes", project)
+	} else {
+		cmd = "codes"
+	}
+
+	if err := remote.RunSSHInteractive(host, cmd); err != nil {
+		ui.ShowError("SSH session failed", err)
+	}
 }

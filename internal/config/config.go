@@ -16,10 +16,62 @@ type Config struct {
 	Profiles        []APIConfig       `json:"profiles"`
 	Default         string            `json:"default"`
 	SkipPermissions bool              `json:"skipPermissions,omitempty"` // 全局是否跳过权限检查
-	Projects        map[string]string `json:"projects,omitempty"`        // 项目别名 -> 目录路径
+	Projects        map[string]ProjectEntry `json:"projects,omitempty"`   // 项目别名 -> 项目条目
 	LastWorkDir     string            `json:"lastWorkDir,omitempty"`     // 上次工作目录
 	DefaultBehavior string            `json:"defaultBehavior,omitempty"` // 默认启动行为: "current", "last", "home"
 	Terminal        string            `json:"terminal,omitempty"`        // 终端模拟器: "terminal", "iterm", "warp", 或自定义命令
+	Remotes         []RemoteHost      `json:"remotes,omitempty"`         // 远程 SSH 主机
+	ProjectsDir     string            `json:"projects_dir,omitempty"`    // git clone 默认目标目录
+}
+
+// RemoteHost represents a remote SSH host configuration.
+type RemoteHost struct {
+	Name     string `json:"name"`
+	Host     string `json:"host"`
+	User     string `json:"user,omitempty"`
+	Port     int    `json:"port,omitempty"`
+	Identity string `json:"identity,omitempty"`
+}
+
+// UserAtHost returns the SSH connection string (e.g., "user@host" or just "host").
+func (r RemoteHost) UserAtHost() string {
+	if r.User != "" {
+		return r.User + "@" + r.Host
+	}
+	return r.Host
+}
+
+// ProjectEntry represents a project with an optional remote host.
+type ProjectEntry struct {
+	Path   string `json:"path"`
+	Remote string `json:"remote,omitempty"` // remote host name, empty = local
+}
+
+// UnmarshalJSON supports both old string format and new object format.
+//
+//	Old: "projects": {"myapp": "/path/to/app"}
+//	New: "projects": {"myapp": {"path": "/path", "remote": "hk"}}
+func (p *ProjectEntry) UnmarshalJSON(data []byte) error {
+	// Try string first (old format)
+	var s string
+	if err := json.Unmarshal(data, &s); err == nil {
+		p.Path = s
+		p.Remote = ""
+		return nil
+	}
+	// Try object (new format)
+	type Alias ProjectEntry
+	return json.Unmarshal(data, (*Alias)(p))
+}
+
+// MarshalJSON saves local projects as plain string (backward compat),
+// remote projects as object.
+func (p ProjectEntry) MarshalJSON() ([]byte, error) {
+	if p.Remote == "" {
+		return json.Marshal(p.Path)
+	}
+	type Alias ProjectEntry
+	return json.Marshal(Alias(p))
 }
 
 type APIConfig struct {
@@ -284,16 +336,21 @@ func GetLastWorkDir() (string, error) {
 
 // AddProject 添加项目别名
 func AddProject(name, path string) error {
+	return AddProjectEntry(name, ProjectEntry{Path: path})
+}
+
+// AddProjectEntry 添加项目条目（支持 remote）
+func AddProjectEntry(name string, entry ProjectEntry) error {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return err
 	}
 
 	if cfg.Projects == nil {
-		cfg.Projects = make(map[string]string)
+		cfg.Projects = make(map[string]ProjectEntry)
 	}
 
-	cfg.Projects[name] = path
+	cfg.Projects[name] = entry
 	return SaveConfig(cfg)
 }
 
@@ -314,28 +371,37 @@ func RemoveProject(name string) error {
 
 // GetProjectPath 获取项目路径
 func GetProjectPath(name string) (string, bool) {
+	entry, exists := GetProject(name)
+	if !exists {
+		return "", false
+	}
+	return entry.Path, true
+}
+
+// GetProject 获取完整项目条目
+func GetProject(name string) (ProjectEntry, bool) {
 	cfg, err := LoadConfig()
 	if err != nil {
-		return "", false
+		return ProjectEntry{}, false
 	}
 
 	if cfg.Projects == nil {
-		return "", false
+		return ProjectEntry{}, false
 	}
 
-	path, exists := cfg.Projects[name]
-	return path, exists
+	entry, exists := cfg.Projects[name]
+	return entry, exists
 }
 
-// ListProjects 列出所有项目
-func ListProjects() (map[string]string, error) {
+// ListProjects 列出所有项目（返回 name → ProjectEntry）
+func ListProjects() (map[string]ProjectEntry, error) {
 	cfg, err := LoadConfig()
 	if err != nil {
 		return nil, err
 	}
 
 	if cfg.Projects == nil {
-		return make(map[string]string), nil
+		return make(map[string]ProjectEntry), nil
 	}
 
 	return cfg.Projects, nil
@@ -471,6 +537,49 @@ func TerminalOptions() []string {
 	return []string{"terminal", "iterm", "warp"}
 }
 
+// GetProjectsDir returns the configured projects directory, defaulting to ~/Projects.
+func GetProjectsDir() string {
+	cfg, err := LoadConfig()
+	if err != nil || cfg == nil {
+		return defaultProjectsDir()
+	}
+	if cfg.ProjectsDir != "" {
+		return cfg.ProjectsDir
+	}
+	return defaultProjectsDir()
+}
+
+// SetProjectsDir sets the projects directory in config.
+func SetProjectsDir(dir string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.ProjectsDir = dir
+	return SaveConfig(cfg)
+}
+
+// ProjectsDirOptions returns preset directory options for the projects dir setting.
+func ProjectsDirOptions() []string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return []string{"~/Projects", "~/Code", "~/Developer"}
+	}
+	return []string{
+		filepath.Join(home, "Projects"),
+		filepath.Join(home, "Code"),
+		filepath.Join(home, "Developer"),
+	}
+}
+
+func defaultProjectsDir() string {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "~/Projects"
+	}
+	return filepath.Join(home, "Projects")
+}
+
 // GetDefaultEnvironmentVars 获取默认的环境变量提示
 func GetDefaultEnvironmentVars() map[string]string {
 	return map[string]string{
@@ -514,6 +623,7 @@ func GetDefaultBehavior() string {
 type ProjectInfo struct {
 	Name           string   `json:"name"`
 	Path           string   `json:"path"`
+	Remote         string   `json:"remote,omitempty"` // remote host name, empty = local
 	Exists         bool     `json:"exists"`
 	GitBranch      string   `json:"gitBranch,omitempty"`
 	GitDirty       bool     `json:"gitDirty"`
@@ -523,20 +633,32 @@ type ProjectInfo struct {
 
 // GetProjectInfo aggregates project metadata including git status and file checks.
 func GetProjectInfo(name, path string) ProjectInfo {
+	return GetProjectInfoFromEntry(name, ProjectEntry{Path: path})
+}
+
+// GetProjectInfoFromEntry aggregates project metadata from a ProjectEntry.
+func GetProjectInfoFromEntry(name string, entry ProjectEntry) ProjectInfo {
 	info := ProjectInfo{
-		Name: name,
-		Path: path,
+		Name:   name,
+		Path:   entry.Path,
+		Remote: entry.Remote,
 	}
 
-	if _, err := os.Stat(path); err != nil {
+	// For remote projects, skip local filesystem checks
+	if entry.Remote != "" {
+		info.Exists = true // assume remote path exists
+		return info
+	}
+
+	if _, err := os.Stat(entry.Path); err != nil {
 		return info
 	}
 	info.Exists = true
 
-	info.GitBranch = getGitBranch(path)
-	info.GitDirty = isGitDirty(path)
-	info.HasClaudeMD = hasClaudeMD(path)
-	info.RecentBranches = getRecentGitBranches(path, 5)
+	info.GitBranch = getGitBranch(entry.Path)
+	info.GitDirty = isGitDirty(entry.Path)
+	info.HasClaudeMD = hasClaudeMD(entry.Path)
+	info.RecentBranches = getRecentGitBranches(entry.Path, 5)
 
 	return info
 }
@@ -587,4 +709,62 @@ func hasClaudeMD(dir string) bool {
 		return true
 	}
 	return false
+}
+
+// AddRemote adds a remote host configuration.
+func AddRemote(host RemoteHost) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	// Check for duplicate name
+	for _, r := range cfg.Remotes {
+		if r.Name == host.Name {
+			return fmt.Errorf("remote %q already exists", host.Name)
+		}
+	}
+
+	cfg.Remotes = append(cfg.Remotes, host)
+	return SaveConfig(cfg)
+}
+
+// RemoveRemote removes a remote host by name.
+func RemoveRemote(name string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	for i, r := range cfg.Remotes {
+		if r.Name == name {
+			cfg.Remotes = append(cfg.Remotes[:i], cfg.Remotes[i+1:]...)
+			return SaveConfig(cfg)
+		}
+	}
+	return nil
+}
+
+// GetRemote returns a remote host by name.
+func GetRemote(name string) (*RemoteHost, bool) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, false
+	}
+
+	for _, r := range cfg.Remotes {
+		if r.Name == name {
+			return &r, true
+		}
+	}
+	return nil, false
+}
+
+// ListRemotes returns all configured remote hosts.
+func ListRemotes() ([]RemoteHost, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Remotes, nil
 }

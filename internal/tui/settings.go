@@ -28,6 +28,7 @@ func newSettingsModel(cfg *config.Config) settingsModel {
 	terminal := "terminal"
 	behavior := "current"
 	skip := "off"
+	projectsDir := config.GetProjectsDir()
 	configFile := config.ConfigPath
 
 	if cfg != nil {
@@ -40,6 +41,9 @@ func newSettingsModel(cfg *config.Config) settingsModel {
 		if cfg.SkipPermissions {
 			skip = "on"
 		}
+		if cfg.ProjectsDir != "" {
+			projectsDir = cfg.ProjectsDir
+		}
 	}
 
 	return settingsModel{
@@ -49,6 +53,12 @@ func newSettingsModel(cfg *config.Config) settingsModel {
 				key:     "terminal",
 				value:   terminal,
 				options: config.TerminalOptions(),
+			},
+			{
+				label:   "Projects Dir",
+				key:     "projects_dir",
+				value:   projectsDir,
+				options: config.ProjectsDirOptions(),
 			},
 			{
 				label:   "Default Behavior",
@@ -131,6 +141,8 @@ func settingDescription(key, value string) string {
 		default:
 			return "Custom: " + value
 		}
+	case "projects_dir":
+		return "Default directory for git clone"
 	case "defaultBehavior":
 		switch value {
 		case "current":

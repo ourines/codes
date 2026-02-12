@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -11,17 +12,20 @@ import (
 	"github.com/charmbracelet/lipgloss"
 
 	"codes/internal/config"
+	"codes/internal/remote"
 	"codes/internal/session"
 )
 
 type viewState int
 
 const (
-	viewProjects viewState = iota
+	viewProjects   viewState = iota
 	viewProfiles
+	viewRemotes
 	viewSettings
 	viewAddForm
 	viewAddProfile
+	viewAddRemote
 )
 
 type panelFocus int
@@ -37,16 +41,20 @@ type Model struct {
 	focus         panelFocus
 	projectList   list.Model
 	profileList   list.Model
+	remoteList    list.Model
 	addForm       addFormModel
 	profileForm   profileFormModel
+	remoteForm    remoteFormModel
 	help          help.Model
 	cfg           *config.Config
 	width         int
 	height        int
 	err           string
+	statusMsg     string // non-error status/loading message
 	sessionMgr    *session.Manager
 	sessionCursor int // cursor index within right-panel session list
 	settings      settingsModel
+	remoteStatus  map[string]*remote.RemoteStatus
 }
 
 // projectDeletedMsg is sent after deleting a project.
@@ -64,9 +72,47 @@ type sessionStartedMsg struct {
 // sessionTickMsg triggers periodic session status refresh.
 type sessionTickMsg struct{}
 
+// remoteDeletedMsg is sent after deleting a remote.
+type remoteDeletedMsg struct{ name string }
+
+// remoteStatusMsg is sent after checking remote status.
+type remoteStatusMsg struct {
+	name   string
+	status *remote.RemoteStatus
+	err    error
+}
+
+// remoteSyncMsg is sent after syncing profiles to a remote.
+type remoteSyncMsg struct {
+	name   string
+	status *remote.RemoteStatus
+	err    error
+}
+
+// remoteSetupMsg is sent after running full setup on a remote.
+type remoteSetupMsg struct {
+	name   string
+	status *remote.RemoteStatus
+	err    error
+}
+
+// remoteStatusTickMsg triggers periodic remote status refresh.
+type remoteStatusTickMsg struct{}
+
+// remoteStatusRefreshDoneMsg carries refreshed statuses from background check.
+type remoteStatusRefreshDoneMsg struct {
+	statuses map[string]*remote.RemoteStatus
+}
+
 func sessionTick() tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 		return sessionTickMsg{}
+	})
+}
+
+func remoteStatusTick() tea.Cmd {
+	return tea.Tick(60*time.Second, func(t time.Time) tea.Msg {
+		return remoteStatusTickMsg{}
 	})
 }
 
@@ -92,21 +138,33 @@ func NewModel() Model {
 	cl.SetShowStatusBar(true)
 	cl.SetFilteringEnabled(true)
 
+	// Load remotes
+	remoteItems := loadRemotes()
+	remoteDelegate := list.NewDefaultDelegate()
+	remoteDelegate.ShowDescription = true
+	rl := list.New(remoteItems, remoteDelegate, 0, 0)
+	rl.Title = "Remotes"
+	rl.SetShowHelp(false)
+	rl.SetShowStatusBar(true)
+	rl.SetFilteringEnabled(true)
+
 	cfg, _ := config.LoadConfig()
 
 	return Model{
-		state:       viewProjects,
-		projectList: pl,
-		profileList: cl,
-		help:        help.New(),
-		cfg:         cfg,
-		sessionMgr:  session.NewManager(config.GetTerminal()),
-		settings:    newSettingsModel(cfg),
+		state:        viewProjects,
+		projectList:  pl,
+		profileList:  cl,
+		remoteList:   rl,
+		help:         help.New(),
+		cfg:          cfg,
+		sessionMgr:   session.NewManager(config.GetTerminal()),
+		settings:     newSettingsModel(cfg),
+		remoteStatus: remote.LoadStatusCache(),
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return sessionTick()
+	return tea.Batch(sessionTick(), remoteStatusTick())
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -124,6 +182,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		listHeight := innerHeight - 6 // leave room for header + footer + help
 		m.projectList.SetSize(listWidth, listHeight)
 		m.profileList.SetSize(listWidth, listHeight)
+		m.remoteList.SetSize(listWidth, listHeight)
 		m.help.Width = innerWidth
 		return m, nil
 
@@ -134,6 +193,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.state == viewAddProfile {
 			return m.updateProfileForm(msg)
+		}
+		if m.state == viewAddRemote {
+			return m.updateRemoteForm(msg)
 		}
 		if m.state == viewSettings {
 			return m.updateSettings(msg)
@@ -151,6 +213,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == viewProfiles && m.profileList.FilterState() == list.Filtering {
 			return m.updateList(msg)
 		}
+		if m.state == viewRemotes && m.remoteList.FilterState() == list.Filtering {
+			return m.updateList(msg)
+		}
 
 		switch {
 		case msg.String() == "q" || msg.String() == "ctrl+c":
@@ -161,6 +226,8 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case viewProjects:
 				m.state = viewProfiles
 			case viewProfiles:
+				m.state = viewRemotes
+			case viewRemotes:
 				m.state = viewSettings
 				m.settings = newSettingsModel(m.cfg)
 			default:
@@ -191,6 +258,71 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.state = viewAddProfile
 			m.profileForm = newProfileForm()
 			return m, nil
+
+		case msg.String() == "a" && m.state == viewRemotes:
+			m.state = viewAddRemote
+			m.remoteForm = newRemoteForm()
+			return m, nil
+
+		case msg.String() == "d" && m.state == viewRemotes:
+			if item, ok := m.remoteList.SelectedItem().(remoteItem); ok {
+				name := item.host.Name
+				return m, func() tea.Msg {
+					config.RemoveRemote(name)
+					return remoteDeletedMsg{name: name}
+				}
+			}
+
+		case msg.String() == "t" && m.state == viewRemotes:
+			// Test connection
+			if item, ok := m.remoteList.SelectedItem().(remoteItem); ok {
+				name := item.host.Name
+				host := item.host
+				m.statusMsg = fmt.Sprintf("testing %s...", name)
+				return m, func() tea.Msg {
+					status, err := remote.CheckRemoteStatus(&host)
+					return remoteStatusMsg{name: name, status: status, err: err}
+				}
+			}
+
+		case msg.String() == "s" && m.state == viewRemotes:
+			// Sync profiles
+			if item, ok := m.remoteList.SelectedItem().(remoteItem); ok {
+				name := item.host.Name
+				host := item.host
+				m.statusMsg = fmt.Sprintf("syncing %s...", name)
+				return m, func() tea.Msg {
+					if err := remote.SyncProfiles(&host); err != nil {
+						return remoteSyncMsg{name: name, err: err}
+					}
+					// Auto-refresh status after sync
+					status, _ := remote.CheckRemoteStatus(&host)
+					return remoteSyncMsg{name: name, status: status}
+				}
+			}
+
+		case msg.String() == "S" && m.state == viewRemotes:
+			// Full setup (install + sync)
+			if item, ok := m.remoteList.SelectedItem().(remoteItem); ok {
+				name := item.host.Name
+				host := item.host
+				m.statusMsg = fmt.Sprintf("setting up %s...", name)
+				return m, func() tea.Msg {
+					// Step 1: Install codes
+					if _, err := remote.InstallOnRemote(&host); err != nil {
+						return remoteSetupMsg{name: name, err: err}
+					}
+					// Step 2: Install Claude CLI (non-fatal)
+					remote.InstallClaudeOnRemote(&host)
+					// Step 3: Sync profiles
+					if err := remote.SyncProfiles(&host); err != nil {
+						return remoteSetupMsg{name: name, err: err}
+					}
+					// Auto-refresh status after setup
+					status, _ := remote.CheckRemoteStatus(&host)
+					return remoteSetupMsg{name: name, status: status}
+				}
+			}
 
 		case msg.String() == "d" && m.state == viewProjects:
 			if item, ok := m.projectList.SelectedItem().(projectItem); ok {
@@ -233,7 +365,20 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					name := item.info.Name
 					path := item.info.Path
 
-					// Start a new session
+					// Remote project → SSH session in new terminal
+					if item.info.Remote != "" {
+						host, ok := config.GetRemote(item.info.Remote)
+						if !ok {
+							m.err = fmt.Sprintf("remote '%s' not found", item.info.Remote)
+							return m, nil
+						}
+						return m, func() tea.Msg {
+							_, err := m.sessionMgr.StartRemoteSession(name, host, path)
+							return sessionStartedMsg{name: name, err: err}
+						}
+					}
+
+					// Local project → session in new terminal
 					args, env := config.ClaudeCmdSpec()
 					return m, func() tea.Msg {
 						_, err := m.sessionMgr.StartSession(name, path, args, env)
@@ -269,10 +414,94 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, sessionTick()
 
 	case projectAddedMsg:
-		config.AddProject(msg.name, msg.path)
+		config.AddProjectEntry(msg.name, config.ProjectEntry{Path: msg.path, Remote: msg.remote})
 		m.state = viewProjects
 		m.projectList.SetItems(loadProjects())
 		m.err = ""
+		return m, nil
+
+	case pathDebounceMsg:
+		// Only process if still in add form, sequence matches, and remote is selected
+		if m.state != viewAddForm || msg.seq != m.addForm.debounceSeq || m.addForm.remoteIdx < 0 {
+			return m, nil
+		}
+		remoteName := m.addForm.selectedRemote()
+		host, ok := config.GetRemote(remoteName)
+		if !ok {
+			return m, nil
+		}
+		m.addForm.loadingSugg = true
+		path := msg.path
+		return m, func() tea.Msg {
+			// Determine dir and prefix from path
+			var dir, prefix string
+			if strings.HasSuffix(path, "/") {
+				dir = path
+				prefix = ""
+			} else {
+				lastSlash := strings.LastIndex(path, "/")
+				if lastSlash >= 0 {
+					dir = path[:lastSlash+1]
+					prefix = path[lastSlash+1:]
+				} else {
+					dir = "/"
+					prefix = path
+				}
+			}
+
+			entries, err := remote.ListRemoteDir(host, dir)
+			if err != nil {
+				return pathSuggestionsMsg{forPath: path}
+			}
+			suggestions := listRemotePathSuggestions(strings.TrimSuffix(dir, "/"), entries, prefix)
+			return pathSuggestionsMsg{suggestions: suggestions, forPath: path}
+		}
+
+	case pathSuggestionsMsg:
+		if m.state == viewAddForm && msg.forPath == m.addForm.pathInput.Value() {
+			m.addForm.suggestions = msg.suggestions
+			m.addForm.suggIdx = 0
+			m.addForm.loadingSugg = false
+		}
+		return m, nil
+
+	case gitCloneStartMsg:
+		m.statusMsg = "Cloning..."
+		m.state = viewProjects
+		gitURL := msg.gitURL
+		clonePath := msg.clonePath
+		name := msg.name
+		remoteName := msg.remote
+
+		return m, func() tea.Msg {
+			if remoteName != "" {
+				// Remote clone
+				host, ok := config.GetRemote(remoteName)
+				if !ok {
+					return gitCloneMsg{err: fmt.Errorf("remote '%s' not found", remoteName)}
+				}
+				_, err := remote.RunSSH(host, fmt.Sprintf("git clone %q %q", gitURL, clonePath))
+				return gitCloneMsg{name: name, path: clonePath, remote: remoteName, err: err}
+			}
+			// Local clone
+			cmd := exec.Command("git", "clone", gitURL, clonePath)
+			if err := cmd.Run(); err != nil {
+				return gitCloneMsg{err: fmt.Errorf("git clone: %w", err)}
+			}
+			return gitCloneMsg{name: name, path: clonePath}
+		}
+
+	case gitCloneMsg:
+		m.statusMsg = ""
+		if msg.err != nil {
+			m.err = fmt.Sprintf("clone failed: %v", msg.err)
+			return m, nil
+		}
+		// Auto-add the cloned repo as a project
+		config.AddProjectEntry(msg.name, config.ProjectEntry{Path: msg.path, Remote: msg.remote})
+		m.projectList.SetItems(loadProjects())
+		m.err = ""
+		m.statusMsg = fmt.Sprintf("✓ cloned and added %s", msg.name)
 		return m, nil
 
 	case projectDeletedMsg:
@@ -300,6 +529,87 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		items, _ := loadProfiles()
 		m.profileList.SetItems(items)
 		m.cfg, _ = config.LoadConfig()
+		return m, nil
+
+	case remoteAddedMsg:
+		config.AddRemote(msg.host)
+		m.state = viewRemotes
+		m.remoteList.SetItems(loadRemotes())
+		m.err = ""
+		return m, nil
+
+	case remoteDeletedMsg:
+		m.remoteList.SetItems(loadRemotes())
+		delete(m.remoteStatus, msg.name)
+		remote.DeleteStatusCache(msg.name)
+		return m, nil
+
+	case remoteStatusMsg:
+		m.statusMsg = ""
+		if msg.err != nil {
+			m.err = fmt.Sprintf("remote %s: %v", msg.name, msg.err)
+		} else {
+			m.remoteStatus[msg.name] = msg.status
+			remote.UpdateStatusCache(msg.name, msg.status)
+			m.err = ""
+			m.statusMsg = fmt.Sprintf("✓ %s connected", msg.name)
+		}
+		return m, nil
+
+	case remoteSyncMsg:
+		m.statusMsg = ""
+		if msg.err != nil {
+			m.err = fmt.Sprintf("sync %s: %v", msg.name, msg.err)
+		} else {
+			m.err = ""
+			if msg.status != nil {
+				m.remoteStatus[msg.name] = msg.status
+				remote.UpdateStatusCache(msg.name, msg.status)
+			}
+			m.statusMsg = fmt.Sprintf("✓ %s synced", msg.name)
+		}
+		return m, nil
+
+	case remoteSetupMsg:
+		m.statusMsg = ""
+		if msg.err != nil {
+			m.err = fmt.Sprintf("setup %s: %v", msg.name, msg.err)
+		} else {
+			m.err = ""
+			if msg.status != nil {
+				m.remoteStatus[msg.name] = msg.status
+				remote.UpdateStatusCache(msg.name, msg.status)
+			}
+			m.statusMsg = fmt.Sprintf("✓ %s setup complete", msg.name)
+		}
+		return m, nil
+
+	case remoteStatusTickMsg:
+		// Auto-refresh: check status for all configured remotes in background
+		remotes, _ := config.ListRemotes()
+		if len(remotes) == 0 {
+			return m, remoteStatusTick()
+		}
+		return m, tea.Batch(
+			func() tea.Msg {
+				results := make(map[string]*remote.RemoteStatus)
+				for _, r := range remotes {
+					host := r
+					status, err := remote.CheckRemoteStatus(&host)
+					if err == nil && status != nil {
+						results[host.Name] = status
+						remote.UpdateStatusCache(host.Name, status)
+					}
+				}
+				return remoteStatusRefreshDoneMsg{statuses: results}
+			},
+			remoteStatusTick(),
+		)
+
+	case remoteStatusRefreshDoneMsg:
+		for name, status := range msg.statuses {
+			m.remoteStatus[name] = status
+		}
 		return m, nil
 
 	case settingChangedMsg:
@@ -335,6 +645,20 @@ func (m Model) updateProfileForm(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.profileForm, cmd = m.profileForm.Update(msg)
+	return m, cmd
+}
+
+func (m Model) updateRemoteForm(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch msg := msg.(type) {
+	case tea.KeyMsg:
+		if msg.String() == "esc" {
+			m.state = viewRemotes
+			return m, nil
+		}
+	}
+
+	var cmd tea.Cmd
+	m.remoteForm, cmd = m.remoteForm.Update(msg)
 	return m, cmd
 }
 
@@ -391,6 +715,8 @@ func (m Model) applySetting(key, value string) tea.Cmd {
 			cfg.DefaultBehavior = value
 		case "skipPermissions":
 			cfg.SkipPermissions = value == "on"
+		case "projects_dir":
+			cfg.ProjectsDir = value
 		}
 		config.SaveConfig(cfg)
 		return settingChangedMsg{}
@@ -472,6 +798,8 @@ func (m Model) updateList(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.projectList, cmd = m.projectList.Update(msg)
 	} else if m.state == viewProfiles {
 		m.profileList, cmd = m.profileList.Update(msg)
+	} else if m.state == viewRemotes {
+		m.remoteList, cmd = m.remoteList.Update(msg)
 	}
 	return m, cmd
 }
@@ -495,6 +823,8 @@ func (m Model) View() string {
 		b.WriteString(m.addForm.View())
 	} else if m.state == viewAddProfile {
 		b.WriteString(m.profileForm.View())
+	} else if m.state == viewAddRemote {
+		b.WriteString(m.remoteForm.View())
 	} else if m.state == viewSettings {
 		// Settings uses full width, no left/right split
 		contentHeight := m.height - 10
@@ -512,6 +842,12 @@ func (m Model) View() string {
 			if item, ok := m.projectList.SelectedItem().(projectItem); ok {
 				rightPanel = renderProjectDetail(item.info, rightWidth, contentHeight, m.sessionMgr, m.focus == focusRight, m.sessionCursor)
 			}
+		} else if m.state == viewRemotes {
+			leftPanel = m.remoteList.View()
+			if item, ok := m.remoteList.SelectedItem().(remoteItem); ok {
+				status := m.remoteStatus[item.host.Name]
+				rightPanel = renderRemoteDetail(item.host, rightWidth, contentHeight, status)
+			}
 		} else {
 			leftPanel = m.profileList.View()
 			if item, ok := m.profileList.SelectedItem().(profileItem); ok {
@@ -527,10 +863,13 @@ func (m Model) View() string {
 		b.WriteString(content)
 	}
 
-	// Error display
+	// Status/Error display
 	if m.err != "" {
 		b.WriteString("\n")
 		b.WriteString(statusErrorStyle.Render("  Error: " + m.err))
+	} else if m.statusMsg != "" {
+		b.WriteString("\n")
+		b.WriteString(statusOkStyle.Render("  " + m.statusMsg))
 	}
 
 	// Footer help
@@ -547,12 +886,15 @@ func (m Model) renderHeader() string {
 
 	projectTab := inactiveTabStyle.Render("Projects")
 	profileTab := inactiveTabStyle.Render("Profiles")
+	remotesTab := inactiveTabStyle.Render("Remotes")
 	settingsTab := inactiveTabStyle.Render("Settings")
 
 	if m.state == viewProjects || m.state == viewAddForm {
 		projectTab = activeTabStyle.Render("Projects")
 	} else if m.state == viewProfiles || m.state == viewAddProfile {
 		profileTab = activeTabStyle.Render("Profiles")
+	} else if m.state == viewRemotes || m.state == viewAddRemote {
+		remotesTab = activeTabStyle.Render("Remotes")
 	} else if m.state == viewSettings {
 		settingsTab = activeTabStyle.Render("Settings")
 	}
@@ -575,7 +917,7 @@ func (m Model) renderHeader() string {
 		sessionInfo = statusOkStyle.Render(fmt.Sprintf(" [%d running]", running))
 	}
 
-	tabs := fmt.Sprintf("%s  %s  %s", projectTab, profileTab, settingsTab)
+	tabs := fmt.Sprintf("%s  %s  %s  %s", projectTab, profileTab, remotesTab, settingsTab)
 	gap := strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(title)-lipgloss.Width(tabs)-lipgloss.Width(defaultCfg)-lipgloss.Width(sessionInfo)-8))
 
 	return fmt.Sprintf("%s  %s%s%s%s", title, tabs, gap, sessionInfo, defaultCfg)
@@ -587,6 +929,9 @@ func (m Model) renderHelp() string {
 	}
 	if m.state == viewAddProfile {
 		return formHintStyle.Render("Tab: switch fields  Space: toggle  Enter: add  Esc: cancel")
+	}
+	if m.state == viewAddRemote {
+		return formHintStyle.Render("Tab: switch fields  Enter: add  Esc: cancel")
 	}
 	if m.state == viewSettings {
 		return formHintStyle.Render("↑↓ select  Enter/Space cycle  tab switch  q quit")
@@ -606,6 +951,9 @@ func (m Model) renderHelp() string {
 	}
 	if m.state == viewProfiles {
 		parts = append(parts, "a add profile")
+	}
+	if m.state == viewRemotes {
+		parts = append(parts, "a add", "d delete", "t test", "s sync", "S setup")
 	}
 
 	parts = append(parts, "tab switch", "q quit")

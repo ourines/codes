@@ -17,7 +17,12 @@ type projectItem struct {
 	info config.ProjectInfo
 }
 
-func (i projectItem) Title() string       { return i.info.Name }
+func (i projectItem) Title() string {
+	if i.info.Remote != "" {
+		return i.info.Name + " [" + i.info.Remote + "]"
+	}
+	return i.info.Name
+}
 func (i projectItem) Description() string { return i.info.Path }
 func (i projectItem) FilterValue() string { return i.info.Name }
 
@@ -36,7 +41,7 @@ func loadProjects() []list.Item {
 
 	items := make([]list.Item, 0, len(names))
 	for _, name := range names {
-		info := config.GetProjectInfo(name, projects[name])
+		info := config.GetProjectInfoFromEntry(name, projects[name])
 		items = append(items, projectItem{info: info})
 	}
 
@@ -108,6 +113,15 @@ func renderProjectDetail(info config.ProjectInfo, width, height int, mgr *sessio
 				lipgloss.NewStyle().Foreground(mutedColor).Render("No active sessions")))
 		}
 		b.WriteString("\n")
+	}
+
+	// Remote
+	if info.Remote != "" {
+		remoteLabel := lipgloss.NewStyle().Bold(true).Foreground(lipgloss.Color("#FFFFFF")).
+			Background(secondaryColor).Padding(0, 1).Render(info.Remote)
+		b.WriteString(fmt.Sprintf("  %s %s\n",
+			detailLabelStyle.Render("Remote:"),
+			remoteLabel))
 	}
 
 	// Path
