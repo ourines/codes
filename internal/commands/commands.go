@@ -17,6 +17,7 @@ import (
 	"codes/internal/output"
 	"codes/internal/remote"
 	"codes/internal/ui"
+	"codes/internal/update"
 )
 
 // Version information, set via ldflags at build time.
@@ -118,7 +119,7 @@ func RunSelect() {
 	}
 }
 
-func RunUpdate() {
+func RunClaudeUpdate() {
 	ui.ShowHeader("Claude Version Manager")
 	ui.ShowLoading("Fetching available versions...")
 
@@ -680,7 +681,7 @@ func RunInit(autoYes bool) {
 	ui.ShowInfo("Checking Claude CLI installation...")
 	if _, err := exec.LookPath("claude"); err != nil {
 		ui.ShowError("Claude CLI not found", nil)
-		ui.ShowWarning("  Run 'codes update' to install Claude CLI")
+		ui.ShowWarning("  Run 'codes claude update' to install Claude CLI")
 		allGood = false
 	} else {
 		ui.ShowSuccess("Claude CLI is installed")
@@ -915,7 +916,7 @@ func RunInit(autoYes bool) {
 			ui.ShowInfo("  1. Install Git")
 		}
 		if _, err := exec.LookPath("claude"); err != nil {
-			ui.ShowInfo("  2. Install Claude CLI: codes update")
+			ui.ShowInfo("  2. Install Claude CLI: codes claude update")
 		}
 		if _, err := os.Stat(config.ConfigPath); err != nil {
 			ui.ShowInfo("  3. Add a configuration: codes profile add")
@@ -924,33 +925,23 @@ func RunInit(autoYes bool) {
 }
 
 func checkForUpdates() {
-	// 检查codes CLI更新
-	go func() {
-		// 简单的版本检查逻辑
-		// 这里可以集成GitHub API检查最新版本
-		// 目前只是占位符
-		// 可以通过检查GitHub releases API来获取最新版本
-		// 例如: https://api.github.com/repos/{owner}/{repo}/releases/latest
-		// 然后与当前版本比较，提示用户更新
-		//
-		// 示例实现:
-		// resp, err := http.Get("https://api.github.com/repos/yourusername/codes/releases/latest")
-		// if err != nil {
-		//     return
-		// }
-		// defer resp.Body.Close()
-		//
-		// var release struct {
-		//     TagName string `json:"tag_name"`
-		// }
-		// if err := json.NewDecoder(resp.Body).Decode(&release); err != nil {
-		//     return
-		// }
-		//
-		// if release.TagName != "dev" && release.TagName != currentVersion {
-		//     ui.ShowInfo("New version %s available! Run 'codes update' to upgrade.", release.TagName)
-		// }
-	}()
+	// Apply any previously staged update (synchronous)
+	if err := update.ApplyStaged(); err != nil {
+		ui.ShowWarning("Failed to apply staged update: %v", err)
+	}
+
+	// Async version check
+	mode := config.GetAutoUpdate()
+	go update.AutoCheck(Version, mode)
+}
+
+// RunSelfUpdate performs a manual codes self-update.
+func RunSelfUpdate() {
+	ui.ShowHeader("codes Self-Update")
+	if err := update.RunSelfUpdate(Version); err != nil {
+		ui.ShowError(err.Error(), nil)
+		os.Exit(1)
+	}
 }
 
 // RunStart 快速启动 Claude Code
@@ -1352,9 +1343,21 @@ func RunConfigSet(key, value string) {
 		RunSkipPermissionsSet(skip)
 	case "terminal":
 		RunTerminalSet(value)
+	case "auto-update", "autoUpdate":
+		v := strings.ToLower(value)
+		switch v {
+		case "notify", "silent", "off":
+			if err := config.SetAutoUpdate(v); err != nil {
+				ui.ShowError("Failed to set auto-update", err)
+				return
+			}
+			ui.ShowSuccess("auto-update set to: %s", v)
+		default:
+			ui.ShowError("Invalid value for auto-update. Must be 'notify', 'silent', or 'off'", nil)
+		}
 	default:
 		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
-		fmt.Println("Available keys: default-behavior, skip-permissions, terminal")
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update")
 	}
 }
 
@@ -1380,11 +1383,16 @@ func RunConfigGet(args []string) {
 				terminal = "terminal"
 			}
 		}
+		autoUpdate := cfg.AutoUpdate
+		if autoUpdate == "" {
+			autoUpdate = "notify"
+		}
 
 		fmt.Println("Current configuration:")
 		fmt.Printf("  default-behavior: %s\n", behavior)
 		fmt.Printf("  skip-permissions: %v\n", cfg.SkipPermissions)
 		fmt.Printf("  terminal: %s\n", terminal)
+		fmt.Printf("  auto-update: %s\n", autoUpdate)
 		fmt.Printf("  default: %s\n", cfg.Default)
 		fmt.Printf("  projects: %d configured\n", len(cfg.Projects))
 		return
@@ -1398,9 +1406,11 @@ func RunConfigGet(args []string) {
 		RunSkipPermissionsGet()
 	case "terminal":
 		RunTerminalGet()
+	case "auto-update", "autoUpdate":
+		fmt.Printf("auto-update: %s\n", config.GetAutoUpdate())
 	default:
 		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
-		fmt.Println("Available keys: default-behavior, skip-permissions, terminal")
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update")
 	}
 }
 
@@ -1669,6 +1679,11 @@ func RunConfigReset(args []string) {
 		RunDefaultBehaviorReset()
 		RunSkipPermissionsReset()
 		RunTerminalReset()
+		if err := config.SetAutoUpdate(""); err != nil {
+			ui.ShowWarning("Failed to reset auto-update: %v", err)
+		} else {
+			ui.ShowSuccess("auto-update reset to default (notify)")
+		}
 		return
 	}
 
@@ -1680,9 +1695,15 @@ func RunConfigReset(args []string) {
 		RunSkipPermissionsReset()
 	case "terminal":
 		RunTerminalReset()
+	case "auto-update", "autoUpdate":
+		if err := config.SetAutoUpdate(""); err != nil {
+			ui.ShowWarning("Failed to reset auto-update: %v", err)
+		} else {
+			ui.ShowSuccess("auto-update reset to default (notify)")
+		}
 	default:
 		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
-		fmt.Println("Available keys: default-behavior, skip-permissions, terminal")
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update")
 	}
 }
 
@@ -1693,6 +1714,7 @@ func RunConfigList(args []string) {
 		fmt.Println("  default-behavior  Startup directory behavior (current, last, home)")
 		fmt.Println("  skip-permissions  Global --dangerously-skip-permissions (true, false)")
 		fmt.Println("  terminal          Terminal emulator for sessions")
+		fmt.Println("  auto-update       Auto-update check mode (notify, silent, off)")
 		fmt.Println()
 		fmt.Println("Use 'codes config list <key>' to see available values for a key.")
 		return
@@ -1711,9 +1733,14 @@ func RunConfigList(args []string) {
 		fmt.Println("  false    Disable --dangerously-skip-permissions globally (default)")
 	case "terminal":
 		RunTerminalList()
+	case "auto-update", "autoUpdate":
+		fmt.Println("Available values for auto-update:")
+		fmt.Println("  notify   Show notification when new version is available (default)")
+		fmt.Println("  silent   Download new version in background, apply on next launch")
+		fmt.Println("  off      Disable automatic update checks")
 	default:
 		ui.ShowError(fmt.Sprintf("Unknown configuration key: %s", key), nil)
-		fmt.Println("Available keys: default-behavior, skip-permissions, terminal")
+		fmt.Println("Available keys: default-behavior, skip-permissions, terminal, auto-update")
 	}
 }
 

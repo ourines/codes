@@ -22,6 +22,7 @@ type Config struct {
 	Terminal        string            `json:"terminal,omitempty"`        // 终端模拟器: "terminal", "iterm", "warp", 或自定义命令
 	Remotes         []RemoteHost      `json:"remotes,omitempty"`         // 远程 SSH 主机
 	ProjectsDir     string            `json:"projects_dir,omitempty"`    // git clone 默认目标目录
+	AutoUpdate      string            `json:"auto_update,omitempty"`     // 自动更新模式: "notify", "silent", "off"
 }
 
 // RemoteHost represents a remote SSH host configuration.
@@ -556,6 +557,29 @@ func SetProjectsDir(dir string) error {
 		return err
 	}
 	cfg.ProjectsDir = dir
+	return SaveConfig(cfg)
+}
+
+// GetAutoUpdate returns the configured auto-update mode.
+// Defaults to "notify" if not set.
+func GetAutoUpdate() string {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return "notify"
+	}
+	if cfg.AutoUpdate == "" {
+		return "notify"
+	}
+	return cfg.AutoUpdate
+}
+
+// SetAutoUpdate sets the auto-update mode. Valid values: "notify", "silent", "off".
+func SetAutoUpdate(mode string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	cfg.AutoUpdate = mode
 	return SaveConfig(cfg)
 }
 
