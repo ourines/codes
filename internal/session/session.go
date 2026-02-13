@@ -1,10 +1,13 @@
 package session
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -73,18 +76,137 @@ type Manager struct {
 	terminal string // terminal emulator preference
 }
 
-// NewManager creates a new session manager.
+// NewManager creates a new session manager and restores any persisted sessions.
 func NewManager(terminal string) *Manager {
-	return &Manager{
+	m := &Manager{
 		sessions: make(map[string]*Session),
 		counter:  make(map[string]int),
 		terminal: terminal,
+	}
+	m.loadSessions()
+	return m
+}
+
+// loadSessions scans the sessions directory and restores sessions whose processes are still alive.
+func (m *Manager) loadSessions() {
+	dir := sessionsDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return
+	}
+
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+
+		data, err := os.ReadFile(filepath.Join(dir, e.Name()))
+		if err != nil {
+			continue
+		}
+
+		var ps persistedSession
+		if err := json.Unmarshal(data, &ps); err != nil {
+			continue
+		}
+
+		if ps.PID <= 0 || !isProcessAlive(ps.PID) {
+			os.Remove(filepath.Join(dir, e.Name()))
+			continue
+		}
+
+		s := &Session{
+			ID:          ps.ID,
+			ProjectName: ps.ProjectName,
+			ProjectPath: ps.ProjectPath,
+			Status:      StatusRunning,
+			PID:         ps.PID,
+			StartedAt:   ps.StartedAt,
+		}
+		m.sessions[ps.ID] = s
+
+		// Update counter to avoid ID collisions
+		// Session IDs are like "projectname-3", extract the number
+		if idx := strings.LastIndex(ps.ID, "-"); idx >= 0 {
+			if num, err := strconv.Atoi(ps.ID[idx+1:]); err == nil {
+				projKey := ps.ID[:idx]
+				if num >= m.counter[projKey] {
+					m.counter[projKey] = num
+				}
+			}
+		}
+
+		// Monitor process exit in background
+		go func(sess *Session) {
+			for {
+				time.Sleep(2 * time.Second)
+				if !isProcessAlive(sess.PID) {
+					sess.mu.Lock()
+					sess.Status = StatusExited
+					sess.mu.Unlock()
+					os.Remove(pidFilePath(sess.ID))
+					removeSessionFile(sess.ID)
+					return
+				}
+			}
+		}(s)
 	}
 }
 
 // pidFilePath returns the path to the PID file for the given session ID.
 func pidFilePath(sessionID string) string {
 	return filepath.Join(os.TempDir(), fmt.Sprintf("codes-session-%s.pid", sessionID))
+}
+
+// sessionsDirOverride allows tests to override the sessions directory.
+var sessionsDirOverride string
+
+// sessionsDir returns the directory for persisted session files (~/.codes/sessions/).
+func sessionsDir() string {
+	if sessionsDirOverride != "" {
+		return sessionsDirOverride
+	}
+	homeDir, _ := os.UserHomeDir()
+	return filepath.Join(homeDir, ".codes", "sessions")
+}
+
+// sessionFilePath returns the path to the persisted session file for the given session ID.
+func sessionFilePath(sessionID string) string {
+	return filepath.Join(sessionsDir(), fmt.Sprintf("%s.json", sessionID))
+}
+
+// persistedSession is the on-disk representation of a session.
+type persistedSession struct {
+	ID          string    `json:"id"`
+	ProjectName string    `json:"project_name"`
+	ProjectPath string    `json:"project_path"`
+	PID         int       `json:"pid"`
+	StartedAt   time.Time `json:"started_at"`
+}
+
+// saveSession writes session metadata to disk.
+func saveSession(s *Session) {
+	dir := sessionsDir()
+	os.MkdirAll(dir, 0755)
+
+	ps := persistedSession{
+		ID:          s.ID,
+		ProjectName: s.ProjectName,
+		ProjectPath: s.ProjectPath,
+		PID:         s.PID,
+		StartedAt:   s.StartedAt,
+	}
+
+	data, err := json.Marshal(ps)
+	if err != nil {
+		return
+	}
+	os.WriteFile(sessionFilePath(s.ID), data, 0644)
+}
+
+// removeSessionFile removes the persisted session file from disk.
+func removeSessionFile(sessionID string) {
+	os.Remove(sessionFilePath(sessionID))
 }
 
 // nextSessionID generates the next session ID for a project (e.g., "myapp-1", "myapp-2").
@@ -117,6 +239,8 @@ func (m *Manager) StartSession(name, path string, args []string, env map[string]
 	}
 	m.sessions[id] = s
 
+	saveSession(s)
+
 	// Monitor process exit in background
 	go func() {
 		for {
@@ -126,6 +250,7 @@ func (m *Manager) StartSession(name, path string, args []string, env map[string]
 				s.Status = StatusExited
 				s.mu.Unlock()
 				os.Remove(pidFilePath(id))
+				removeSessionFile(id)
 				return
 			}
 		}
@@ -188,6 +313,7 @@ func (m *Manager) KillSession(id string) error {
 	err := killProcess(s.PID)
 	s.Status = StatusExited
 	os.Remove(pidFilePath(id))
+	removeSessionFile(id)
 	return err
 }
 
@@ -202,6 +328,7 @@ func (m *Manager) KillByProject(name string) {
 			if s.Status == StatusRunning && s.PID > 0 {
 				killProcess(s.PID)
 				os.Remove(pidFilePath(s.ID))
+				removeSessionFile(s.ID)
 			}
 			s.Status = StatusExited
 			s.mu.Unlock()
@@ -245,6 +372,7 @@ func (m *Manager) RefreshStatus() {
 		if s.Status == StatusRunning && s.PID > 0 && !isProcessAlive(s.PID) {
 			s.Status = StatusExited
 			os.Remove(pidFilePath(s.ID))
+			removeSessionFile(s.ID)
 		}
 		s.mu.Unlock()
 	}
@@ -257,6 +385,7 @@ func (m *Manager) CleanExited() {
 
 	for id, s := range m.sessions {
 		if s.Status == StatusExited {
+			removeSessionFile(id)
 			delete(m.sessions, id)
 		}
 	}
@@ -284,6 +413,8 @@ func (m *Manager) StartRemoteSession(name string, host *config.RemoteHost, proje
 	}
 	m.sessions[id] = s
 
+	saveSession(s)
+
 	// Monitor process exit in background
 	go func() {
 		for {
@@ -293,6 +424,7 @@ func (m *Manager) StartRemoteSession(name string, host *config.RemoteHost, proje
 				s.Status = StatusExited
 				s.mu.Unlock()
 				os.Remove(pidFilePath(id))
+				removeSessionFile(id)
 				return
 			}
 		}
