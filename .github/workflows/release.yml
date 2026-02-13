@@ -1,8 +1,10 @@
 name: Release
 
 on:
-  push:
+  workflow_run:
+    workflows: ["CI"]
     branches: [main]
+    types: [completed]
   workflow_dispatch:
 
 # Prevent concurrent releases
@@ -12,6 +14,7 @@ concurrency:
 
 jobs:
   check:
+    if: github.event_name == 'workflow_dispatch' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     outputs:
       should_release: ${{ steps.check.outputs.should_release }}
@@ -109,7 +112,7 @@ jobs:
           fi
 
           # Other changes (refactor, perf, etc.)
-          OTHERS=$(git log $RANGE --pretty="- %s (%h)" --grep="^refactor\|^perf\|^chore\|^ci\|^docs\|^test\|^build" --extended-regexp 2>/dev/null)
+          OTHERS=$(git log $RANGE --pretty="- %s (%h)" --grep="^refactor|^perf|^chore|^ci|^docs|^test|^build" --extended-regexp 2>/dev/null)
           if [ -n "$OTHERS" ]; then
             echo "### Other Changes"
             echo "$OTHERS"
