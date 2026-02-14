@@ -49,7 +49,7 @@ func init() {
 
 		// If stdin is a TTY, launch TUI (sessions managed inside TUI)
 		if term.IsTerminal(int(os.Stdin.Fd())) {
-			if err := tui.Run(); err != nil {
+			if err := tui.Run(commands.Version); err != nil {
 				os.Exit(1)
 			}
 			return

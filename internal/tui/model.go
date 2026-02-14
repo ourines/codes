@@ -16,6 +16,7 @@ import (
 	"codes/internal/config"
 	"codes/internal/remote"
 	"codes/internal/session"
+	"codes/internal/update"
 )
 
 type viewState int
@@ -57,6 +58,8 @@ type Model struct {
 	sessionCursor int // cursor index within right-panel session list
 	settings      settingsModel
 	remoteStatus  map[string]*remote.RemoteStatus
+	version       string // 当前版本
+	latestVersion string // 缓存的最新版本（空 = 未知或已是最新）
 }
 
 // projectDeletedMsg is sent after deleting a project.
@@ -124,6 +127,11 @@ type remoteStatusRefreshDoneMsg struct {
 	statuses map[string]*remote.RemoteStatus
 }
 
+// updateCheckMsg is sent after checking for updates.
+type updateCheckMsg struct {
+	latestVersion string
+}
+
 func sessionTick() tea.Cmd {
 	return tea.Tick(3*time.Second, func(t time.Time) tea.Msg {
 		return sessionTickMsg{}
@@ -137,7 +145,7 @@ func remoteStatusTick() tea.Cmd {
 }
 
 // NewModel creates the initial TUI model.
-func NewModel() Model {
+func NewModel(version string) Model {
 	// Load projects
 	projectItems := loadProjects()
 	projectDelegate := newStyledDelegate()
@@ -180,11 +188,34 @@ func NewModel() Model {
 		sessionMgr:   session.NewManager(config.GetTerminal()),
 		settings:     newSettingsModel(cfg),
 		remoteStatus: remote.LoadStatusCache(),
+		version:      version,
 	}
 }
 
 func (m Model) Init() tea.Cmd {
-	return tea.Batch(sessionTick(), remoteStatusTick())
+	return tea.Batch(sessionTick(), remoteStatusTick(), m.checkUpdate())
+}
+
+func (m Model) checkUpdate() tea.Cmd {
+	return func() tea.Msg {
+		// 1. 先读缓存
+		cached := update.GetCachedLatestVersion()
+		if cached != "" && update.CompareVersions(m.version, cached) {
+			return updateCheckMsg{latestVersion: cached}
+		}
+		// 2. 如果缓存没有或不需要更新，尝试网络检查
+		if m.version == "dev" {
+			return updateCheckMsg{}
+		}
+		release, err := update.CheckLatestVersion()
+		if err != nil {
+			return updateCheckMsg{}
+		}
+		if update.CompareVersions(m.version, release.TagName) {
+			return updateCheckMsg{latestVersion: release.TagName}
+		}
+		return updateCheckMsg{}
+	}
 }
 
 func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -741,6 +772,10 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case updateCheckMsg:
+		m.latestVersion = msg.latestVersion
+		return m, nil
+
 	case settingChangedMsg:
 		m.cfg, _ = config.LoadConfig()
 		return m, nil
@@ -1046,10 +1081,26 @@ func (m Model) renderHeader() string {
 		sessionInfo = statusOkStyle.Render(fmt.Sprintf(" [%d running]", running))
 	}
 
-	tabs := fmt.Sprintf("%s  %s  %s  %s", projectTab, profileTab, remotesTab, settingsTab)
-	gap := strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(title)-lipgloss.Width(tabs)-lipgloss.Width(defaultCfg)-lipgloss.Width(sessionInfo)-8))
+	// 版本信息
+	versionInfo := ""
+	if m.version != "" {
+		if m.latestVersion != "" {
+			versionInfo = lipgloss.NewStyle().
+				Foreground(lipgloss.Color("214")). // 橙色
+				Render(fmt.Sprintf("v%s → v%s",
+					strings.TrimPrefix(m.version, "v"),
+					strings.TrimPrefix(m.latestVersion, "v")))
+		} else {
+			versionInfo = lipgloss.NewStyle().
+				Foreground(mutedColor).
+				Render(fmt.Sprintf("v%s", strings.TrimPrefix(m.version, "v")))
+		}
+	}
 
-	return fmt.Sprintf("%s  %s%s%s%s", title, tabs, gap, sessionInfo, defaultCfg)
+	tabs := fmt.Sprintf("%s  %s  %s  %s", projectTab, profileTab, remotesTab, settingsTab)
+	gap := strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(title)-lipgloss.Width(tabs)-lipgloss.Width(defaultCfg)-lipgloss.Width(sessionInfo)-lipgloss.Width(versionInfo)-9))
+
+	return fmt.Sprintf("%s  %s%s%s%s %s", title, tabs, gap, sessionInfo, defaultCfg, versionInfo)
 }
 
 func (m Model) renderHelp() string {
@@ -1091,8 +1142,8 @@ func (m Model) renderHelp() string {
 }
 
 // Run starts the TUI application.
-func Run() error {
-	m := NewModel()
+func Run(version string) error {
+	m := NewModel(version)
 	p := tea.NewProgram(m, tea.WithAltScreen())
 	_, err := p.Run()
 	return err
