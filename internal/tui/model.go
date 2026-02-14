@@ -83,6 +83,12 @@ type sessionStartedMsg struct {
 	err  error
 }
 
+// inlineSessionFinishedMsg is sent when an inline (in-TUI) session completes.
+type inlineSessionFinishedMsg struct {
+	name string
+	err  error
+}
+
 // sessionTickMsg triggers periodic session status refresh.
 type sessionTickMsg struct{}
 
@@ -428,6 +434,43 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.sessionMgr = session.NewManager(next)
 			return m, nil
 
+		case msg.String() == "o" && m.state == viewProjects:
+			// Open claude session inline (within codes TUI)
+			if item, ok := m.projectList.SelectedItem().(projectItem); ok {
+				if !item.info.Exists {
+					return m, nil
+				}
+				name := item.info.Name
+				path := item.info.Path
+
+				if item.info.Remote != "" {
+					// Remote project → inline SSH session
+					host, ok := config.GetRemote(item.info.Remote)
+					if !ok {
+						m.err = fmt.Sprintf("remote '%s' not found", item.info.Remote)
+						return m, nil
+					}
+					sshArgs := []string{"-t", "-o", "StrictHostKeyChecking=accept-new"}
+					if host.Port != 0 {
+						sshArgs = append(sshArgs, "-p", fmt.Sprintf("%d", host.Port))
+					}
+					if host.Identity != "" {
+						sshArgs = append(sshArgs, "-i", host.Identity)
+					}
+					sshArgs = append(sshArgs, host.UserAtHost(), fmt.Sprintf("cd %s && codes", path))
+					cmd := exec.Command("ssh", sshArgs...)
+					return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+						return inlineSessionFinishedMsg{name: name, err: err}
+					})
+				}
+
+				// Local project → inline claude session
+				cmd := config.BuildClaudeCmd(path)
+				return m, tea.ExecProcess(cmd, func(err error) tea.Msg {
+					return inlineSessionFinishedMsg{name: name, err: err}
+				})
+			}
+
 		case msg.String() == "enter":
 			if m.state == viewProjects {
 				if item, ok := m.projectList.SelectedItem().(projectItem); ok {
@@ -471,6 +514,15 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				}
 			}
 		}
+
+	case inlineSessionFinishedMsg:
+		if msg.err != nil {
+			m.err = fmt.Sprintf("session %s: %v", msg.name, msg.err)
+		} else {
+			m.statusMsg = fmt.Sprintf("session %s closed", msg.name)
+		}
+		m.state = viewProjects
+		return m, nil
 
 	case sessionStartedMsg:
 		if msg.err != nil {
@@ -1024,7 +1076,7 @@ func (m Model) renderHelp() string {
 	}
 
 	if m.state == viewProjects {
-		parts = append(parts, "→/l sessions", "a add", "d delete", "x kill", "e editor", "g github", "t terminal")
+		parts = append(parts, "o inline", "→/l sessions", "a add", "d delete", "x kill", "e editor", "g github", "t terminal")
 	}
 	if m.state == viewProfiles {
 		parts = append(parts, "a add profile")
