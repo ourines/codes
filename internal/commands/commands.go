@@ -1142,6 +1142,60 @@ func RunProjectList() {
 	ui.ShowInfo("Start a project with: codes start <name>")
 }
 
+// RunProjectScan scans for existing Claude Code projects and imports them.
+func RunProjectScan() {
+	ui.ShowLoading("Scanning ~/.claude/projects/...")
+
+	discovered, err := config.ScanClaudeProjects()
+	if err != nil {
+		if output.JSONMode {
+			output.PrintError(err)
+			return
+		}
+		ui.ShowError("Failed to scan Claude projects", err)
+		return
+	}
+
+	if len(discovered) == 0 {
+		if output.JSONMode {
+			output.Print(map[string]int{"added": 0, "skipped": 0}, nil)
+			return
+		}
+		ui.ShowInfo("No Claude projects found in ~/.claude/projects/")
+		return
+	}
+
+	added, skipped, err := config.ImportDiscoveredProjects(discovered)
+	if err != nil {
+		if output.JSONMode {
+			output.PrintError(err)
+			return
+		}
+		ui.ShowError("Failed to import projects", err)
+		return
+	}
+
+	if output.JSONMode {
+		output.Print(map[string]int{"added": added, "skipped": skipped, "total": len(discovered)}, nil)
+		return
+	}
+
+	fmt.Println()
+	ui.ShowHeader("Claude Project Scan")
+	fmt.Println()
+
+	if added > 0 {
+		ui.ShowSuccess("Imported %d new project(s)", added)
+	}
+	if skipped > 0 {
+		ui.ShowInfo("Skipped %d (already in config)", skipped)
+	}
+	if added == 0 {
+		ui.ShowInfo("All discovered projects are already configured")
+	}
+	fmt.Println()
+}
+
 // runClaudeInDirectory 在指定目录运行 Claude
 func runClaudeInDirectory(dir string) {
 	// 调用更新检查

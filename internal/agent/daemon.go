@@ -3,9 +3,11 @@ package agent
 import (
 	"codes/internal/config"
 	"context"
+	"encoding/json"
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strings"
 	"time"
 )
@@ -395,12 +397,63 @@ func (d *Daemon) reportTaskCompleted(task *Task, result string) {
 
 	// Send to all (broadcast) so leader and other agents can see
 	SendTaskReport(d.TeamName, d.AgentName, "", MsgTaskCompleted, task.ID, content)
+
+	// Write notification file for external consumers
+	d.writeNotification(task, "completed")
 }
 
 // reportTaskFailed broadcasts a task failure report to the team.
 func (d *Daemon) reportTaskFailed(task *Task, errMsg string) {
 	content := fmt.Sprintf("Task #%d FAILED: %s\n\nError: %s", task.ID, task.Subject, errMsg)
 	SendTaskReport(d.TeamName, d.AgentName, "", MsgTaskFailed, task.ID, content)
+
+	// Write notification file for external consumers
+	d.writeNotification(task, "failed")
+}
+
+// taskNotification is the JSON structure written to ~/.codes/notifications/.
+type taskNotification struct {
+	Team      string `json:"team"`
+	TaskID    int    `json:"taskId"`
+	Subject   string `json:"subject"`
+	Status    string `json:"status"`
+	Agent     string `json:"agent"`
+	Timestamp string `json:"timestamp"`
+}
+
+// writeNotification writes a notification file for a completed or failed task.
+func (d *Daemon) writeNotification(task *Task, status string) {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		d.logger.Printf("notification: cannot get home dir: %v", err)
+		return
+	}
+
+	dir := filepath.Join(home, ".codes", "notifications")
+	if err := os.MkdirAll(dir, 0755); err != nil {
+		d.logger.Printf("notification: cannot create dir: %v", err)
+		return
+	}
+
+	n := taskNotification{
+		Team:      d.TeamName,
+		TaskID:    task.ID,
+		Subject:   task.Subject,
+		Status:    status,
+		Agent:     d.AgentName,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+
+	data, err := json.MarshalIndent(n, "", "  ")
+	if err != nil {
+		d.logger.Printf("notification: marshal error: %v", err)
+		return
+	}
+
+	filename := filepath.Join(dir, fmt.Sprintf("%s-%d.json", d.TeamName, task.ID))
+	if err := os.WriteFile(filename, data, 0644); err != nil {
+		d.logger.Printf("notification: write error: %v", err)
+	}
 }
 
 // truncate shortens a string to maxLen, adding "..." if truncated.

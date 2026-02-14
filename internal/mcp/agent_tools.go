@@ -11,6 +11,8 @@ import (
 	"codes/internal/agent"
 )
 
+const notificationMonitorCmd = `mkdir -p ~/.codes/notifications && echo "Monitoring agent notifications..." && for i in $(seq 1 360); do files=$(ls ~/.codes/notifications/*.json 2>/dev/null); if [ -n "$files" ]; then echo "=== Agent Notification ==="; for f in $files; do cat "$f"; echo ""; rm "$f"; done; i=0; fi; sleep 5; done`
+
 // -- team_create --
 
 type teamCreateInput struct {
@@ -190,8 +192,9 @@ type agentStartInput struct {
 }
 
 type agentStartOutput struct {
-	Started bool `json:"started"`
-	PID     int  `json:"pid,omitempty"`
+	Started    bool   `json:"started"`
+	PID        int    `json:"pid,omitempty"`
+	MonitorCmd string `json:"monitor_cmd" jsonschema:"Bash command to monitor agent notifications. Run this in a background Task to receive completion alerts."`
 }
 
 func agentStartHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input agentStartInput) (*mcpsdk.CallToolResult, agentStartOutput, error) {
@@ -227,7 +230,7 @@ func agentStartHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input a
 	pid := cmd.Process.Pid
 	cmd.Process.Release() // detach
 
-	return nil, agentStartOutput{Started: true, PID: pid}, nil
+	return nil, agentStartOutput{Started: true, PID: pid, MonitorCmd: notificationMonitorCmd}, nil
 }
 
 // -- agent_stop --
@@ -551,7 +554,8 @@ type teamStartAllResult struct {
 }
 
 type teamStartAllOutput struct {
-	Results []teamStartAllResult `json:"results"`
+	Results    []teamStartAllResult `json:"results"`
+	MonitorCmd string               `json:"monitor_cmd" jsonschema:"Bash command to monitor agent notifications. Run this in a background Task to receive completion alerts."`
 }
 
 func teamStartAllHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input teamStartAllInput) (*mcpsdk.CallToolResult, teamStartAllOutput, error) {
@@ -595,7 +599,7 @@ func teamStartAllHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input
 		results = append(results, r)
 	}
 
-	return nil, teamStartAllOutput{Results: results}, nil
+	return nil, teamStartAllOutput{Results: results, MonitorCmd: notificationMonitorCmd}, nil
 }
 
 // -- team_stop_all --
@@ -664,7 +668,7 @@ func registerAgentTools(server *mcpsdk.Server) {
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "team_start_all",
-		Description: "Start all agent daemons in a team, skipping already running agents",
+		Description: "Start all agent daemons in a team, skipping already running agents. IMPORTANT: After starting, launch a background monitor to receive task completion notifications. Use the Task tool (run_in_background=true, subagent_type=Bash) with a bash script that polls ~/.codes/notifications/ for .json files. When a file appears, read and report its contents, then delete it. This enables real-time agent progress reporting to the current session.",
 	}, teamStartAllHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
@@ -689,7 +693,7 @@ func registerAgentTools(server *mcpsdk.Server) {
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "agent_start",
-		Description: "Start an agent daemon that polls for and executes tasks",
+		Description: "Start an agent daemon that polls for and executes tasks. After starting, use a background task to monitor ~/.codes/notifications/ for completion notifications (e.g. Task tool with run_in_background + bash polling loop).",
 	}, agentStartHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
@@ -731,4 +735,85 @@ func registerAgentTools(server *mcpsdk.Server) {
 		Name:        "message_mark_read",
 		Description: "Mark a specific message as read",
 	}, messageMarkReadHandler)
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "test_sampling",
+		Description: "Test MCP sampling: send a createMessage request back to the client to verify sampling support",
+	}, testSamplingHandler)
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "team_watch",
+		Description: "Get a bash command that monitors agent task completion notifications. Run the returned command in a background Task (run_in_background=true, subagent_type=Bash) to receive real-time notifications when agents complete or fail tasks. The command polls ~/.codes/notifications/ for JSON files written by agent daemons.",
+	}, teamWatchHandler)
+}
+
+// -- test_sampling --
+
+type testSamplingInput struct {
+	Message string `json:"message" jsonschema:"Message to send via sampling"`
+}
+
+type testSamplingOutput struct {
+	Supported bool   `json:"supported"`
+	Response  string `json:"response,omitempty"`
+	Error     string `json:"error,omitempty"`
+}
+
+func testSamplingHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input testSamplingInput) (*mcpsdk.CallToolResult, testSamplingOutput, error) {
+	if input.Message == "" {
+		input.Message = "Agent notification test: task completed successfully"
+	}
+
+	result, err := req.Session.CreateMessage(ctx, &mcpsdk.CreateMessageParams{
+		Messages: []*mcpsdk.SamplingMessage{
+			{
+				Role:    mcpsdk.Role("user"),
+				Content: &mcpsdk.TextContent{Text: input.Message},
+			},
+		},
+		MaxTokens: 200,
+	})
+	if err != nil {
+		return nil, testSamplingOutput{
+			Supported: false,
+			Error:     err.Error(),
+		}, nil
+	}
+
+	var responseText string
+	if tc, ok := result.Content.(*mcpsdk.TextContent); ok {
+		responseText = tc.Text
+	}
+
+	return nil, testSamplingOutput{
+		Supported: true,
+		Response:  responseText,
+	}, nil
+}
+
+// -- team_watch --
+
+type teamWatchInput struct {
+	Team    string `json:"team,omitempty" jsonschema:"Optional team name to filter notifications"`
+	Timeout int    `json:"timeout,omitempty" jsonschema:"Monitoring duration in minutes (default 30)"`
+}
+
+type teamWatchOutput struct {
+	Command     string `json:"command" jsonschema:"Bash command to run in a background Task for monitoring"`
+	Instruction string `json:"instruction" jsonschema:"How to use this command"`
+}
+
+func teamWatchHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input teamWatchInput) (*mcpsdk.CallToolResult, teamWatchOutput, error) {
+	timeout := input.Timeout
+	if timeout <= 0 {
+		timeout = 30
+	}
+	iterations := timeout * 12 // 5-second intervals
+
+	cmd := fmt.Sprintf(`mkdir -p ~/.codes/notifications && echo "Monitoring agent notifications (timeout: %dm)..." && for i in $(seq 1 %d); do files=$(ls ~/.codes/notifications/*.json 2>/dev/null); if [ -n "$files" ]; then echo "=== Agent Notification ==="; for f in $files; do cat "$f"; echo ""; rm "$f"; done; fi; sleep 5; done && echo "Monitor timeout reached"`, timeout, iterations)
+
+	return nil, teamWatchOutput{
+		Command:     cmd,
+		Instruction: "Run this command using the Task tool with run_in_background=true and subagent_type=Bash. You will be automatically notified when agents complete tasks.",
+	}, nil
 }
