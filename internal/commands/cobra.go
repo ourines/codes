@@ -277,11 +277,22 @@ var ProjectListCmd = &cobra.Command{
 	},
 }
 
+// ProjectScanCmd represents the project scan command
+var ProjectScanCmd = &cobra.Command{
+	Use:   "scan",
+	Short: "Scan and import Claude projects",
+	Long:  "Scan ~/.claude/projects/ for existing Claude Code projects and import them as project aliases",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunProjectScan()
+	},
+}
+
 func init() {
 	ProjectAddCmd.Flags().StringP("remote", "r", "", "Remote host name (for remote projects)")
 	ProjectCmd.AddCommand(ProjectAddCmd)
 	ProjectCmd.AddCommand(ProjectRemoveCmd)
 	ProjectCmd.AddCommand(ProjectListCmd)
+	ProjectCmd.AddCommand(ProjectScanCmd)
 
 	ProfileCmd.AddCommand(AddCmd, SelectCmd, TestCmd, ProfileListCmd, ProfileRemoveCmd)
 

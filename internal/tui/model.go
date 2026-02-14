@@ -16,6 +16,7 @@ import (
 	"codes/internal/config"
 	"codes/internal/remote"
 	"codes/internal/session"
+	"codes/internal/stats"
 	"codes/internal/update"
 )
 
@@ -26,6 +27,7 @@ const (
 	viewProfiles
 	viewRemotes
 	viewSettings
+	viewStats
 	viewAddForm
 	viewAddProfile
 	viewAddRemote
@@ -60,10 +62,29 @@ type Model struct {
 	remoteStatus  map[string]*remote.RemoteStatus
 	version       string // 当前版本
 	latestVersion string // 缓存的最新版本（空 = 未知或已是最新）
+	// Stats tab
+	statsDaily   []stats.DailyStat
+	statsRecords []stats.SessionRecord
+	statsRange   string // "week" | "month" | "all"
+	statsLoading bool
 }
 
 // projectDeletedMsg is sent after deleting a project.
 type projectDeletedMsg struct{ name string }
+
+// projectScanMsg is sent after scanning for Claude projects.
+type projectScanMsg struct {
+	added   int
+	skipped int
+	err     error
+}
+
+// statsLoadedMsg is sent after loading stats data.
+type statsLoadedMsg struct {
+	daily   []stats.DailyStat
+	records []stats.SessionRecord
+	err     error
+}
 
 // editorOpenedMsg is sent after attempting to open a project in an editor.
 type editorOpenedMsg struct {
@@ -251,6 +272,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == viewSettings {
 			return m.updateSettings(msg)
 		}
+		if m.state == viewStats {
+			return m.updateStats(msg)
+		}
 
 		// Right panel focused — handle session selection
 		if m.focus == focusRight && m.state == viewProjects {
@@ -281,6 +305,13 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case viewRemotes:
 				m.state = viewSettings
 				m.settings = newSettingsModel(m.cfg)
+			case viewSettings:
+				m.state = viewStats
+				if !m.statsLoading && len(m.statsDaily) == 0 {
+					m.statsLoading = true
+					m.statsRange = "week"
+					return m, loadStatsCmd("week")
+				}
 			default:
 				m.state = viewProjects
 			}
@@ -388,6 +419,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.sessionMgr.KillByProject(item.info.Name)
 			}
 			return m, nil
+
+		case msg.String() == "S" && m.state == viewProjects:
+			m.statusMsg = "scanning Claude projects..."
+			return m, func() tea.Msg {
+				discovered, err := config.ScanClaudeProjects()
+				if err != nil {
+					return projectScanMsg{err: err}
+				}
+				added, skipped, err := config.ImportDiscoveredProjects(discovered)
+				return projectScanMsg{added: added, skipped: skipped, err: err}
+			}
 
 		case msg.String() == "e" && m.state == viewProjects:
 			if item, ok := m.projectList.SelectedItem().(projectItem); ok {
@@ -666,6 +708,28 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 	case projectDeletedMsg:
 		m.projectList.SetItems(loadProjects())
+		return m, nil
+
+	case projectScanMsg:
+		m.statusMsg = ""
+		if msg.err != nil {
+			m.err = fmt.Sprintf("scan failed: %v", msg.err)
+		} else if msg.added > 0 {
+			m.projectList.SetItems(loadProjects())
+			m.statusMsg = fmt.Sprintf("✓ imported %d project(s), skipped %d", msg.added, msg.skipped)
+		} else {
+			m.statusMsg = fmt.Sprintf("all %d project(s) already configured", msg.skipped)
+		}
+		return m, nil
+
+	case statsLoadedMsg:
+		m.statsLoading = false
+		if msg.err != nil {
+			m.err = fmt.Sprintf("stats: %v", msg.err)
+		} else {
+			m.statsDaily = msg.daily
+			m.statsRecords = msg.records
+		}
 		return m, nil
 
 	case profileAddedMsg:
@@ -993,6 +1057,10 @@ func (m Model) View() string {
 		// Settings uses full width, no left/right split
 		contentHeight := m.height - 7
 		b.WriteString(m.settings.View(innerWidth, contentHeight))
+	} else if m.state == viewStats {
+		// Stats uses full width, no left/right split
+		contentHeight := m.height - 7
+		b.WriteString(renderStatsView(m.statsDaily, m.statsRecords, m.statsRange, m.statsLoading, innerWidth, contentHeight))
 	} else {
 		// Main content: left list + right detail
 		leftWidth := innerWidth / 2
@@ -1052,6 +1120,7 @@ func (m Model) renderHeader() string {
 	profileTab := inactiveTabStyle.Render("Profiles")
 	remotesTab := inactiveTabStyle.Render("Remotes")
 	settingsTab := inactiveTabStyle.Render("Settings")
+	statsTab := inactiveTabStyle.Render("Stats")
 
 	if m.state == viewProjects || m.state == viewAddForm {
 		projectTab = activeTabStyle.Render("Projects")
@@ -1061,6 +1130,8 @@ func (m Model) renderHeader() string {
 		remotesTab = activeTabStyle.Render("Remotes")
 	} else if m.state == viewSettings {
 		settingsTab = activeTabStyle.Render("Settings")
+	} else if m.state == viewStats {
+		statsTab = activeTabStyle.Render("Stats")
 	}
 
 	defaultCfg := ""
@@ -1097,7 +1168,7 @@ func (m Model) renderHeader() string {
 		}
 	}
 
-	tabs := fmt.Sprintf("%s  %s  %s  %s", projectTab, profileTab, remotesTab, settingsTab)
+	tabs := fmt.Sprintf("%s  %s  %s  %s  %s", projectTab, profileTab, remotesTab, settingsTab, statsTab)
 	gap := strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(title)-lipgloss.Width(tabs)-lipgloss.Width(defaultCfg)-lipgloss.Width(sessionInfo)-lipgloss.Width(versionInfo)-9))
 
 	return fmt.Sprintf("%s  %s%s%s%s %s", title, tabs, gap, sessionInfo, defaultCfg, versionInfo)
@@ -1116,6 +1187,9 @@ func (m Model) renderHelp() string {
 	if m.state == viewSettings {
 		return formHintStyle.Render("↑↓ select  Enter/Space cycle  tab switch  q quit")
 	}
+	if m.state == viewStats {
+		return formHintStyle.Render("w week  m month  a all time  r refresh  tab switch  q quit")
+	}
 	if m.focus == focusRight && m.state == viewProjects {
 		return formHintStyle.Render("↑↓/jk select  Enter open  x kill  ← back  q quit")
 	}
@@ -1127,7 +1201,7 @@ func (m Model) renderHelp() string {
 	}
 
 	if m.state == viewProjects {
-		parts = append(parts, "o inline", "→/l sessions", "a add", "d delete", "x kill", "e editor", "g github", "t terminal")
+		parts = append(parts, "o inline", "→/l sessions", "a add", "d delete", "x kill", "e editor", "g github", "t terminal", "S scan")
 	}
 	if m.state == viewProfiles {
 		parts = append(parts, "a add profile")
