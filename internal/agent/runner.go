@@ -68,13 +68,9 @@ func buildClaudeArgs(opts RunOptions) []string {
 	// JSON output
 	args = append(args, "--output-format", "json")
 
-	// Session continuity
-	if opts.SessionID != "" {
-		if opts.Resume {
-			args = append(args, "--resume", "--session-id", opts.SessionID)
-		} else {
-			args = append(args, "--session-id", opts.SessionID)
-		}
+	// Session continuity: --session-id requires --resume or --continue
+	if opts.SessionID != "" && opts.Resume {
+		args = append(args, "--resume", "--session-id", opts.SessionID)
 	}
 
 	// Model selection
