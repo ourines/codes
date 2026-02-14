@@ -1,0 +1,241 @@
+# Codes CLI
+
+[English](README.md) | [中文](README.zh-CN.md)
+
+Claude Code 的环境配置管理、项目管理与多 Agent 协作工具。一键切换 API profile，管理多个项目工作区，并通过自治 Agent 团队并行完成复杂任务。
+
+## 功能特性
+
+- **Profile 切换** — 多套 API 环境配置（Anthropic、代理、自定义端点）一键切换
+- **项目管理** — 项目别名、工作目录管理，TUI 可视化操作
+- **Agent 团队** — 多个 Claude Agent 自治协作，任务依赖、消息传递、自动汇报
+- **MCP Server** — 29 个工具集成到 Claude Code，直接在对话中管理一切
+- **跨平台** — Linux, macOS, Windows (amd64 & arm64)
+
+## 安装
+
+```bash
+# Linux / macOS
+curl -fsSL https://raw.githubusercontent.com/ourines/codes/main/install.sh | sh
+
+# Windows (PowerShell)
+irm https://raw.githubusercontent.com/ourines/codes/main/install.ps1 | iex
+
+# 从源码构建 (Go 1.24+)
+git clone https://github.com/ourines/codes.git && cd codes && make build
+```
+
+安装后运行 `codes init` 设置 shell 补全和 PATH。
+
+## Claude Code 集成
+
+将 `codes` 添加为 MCP server，让 Claude Code 直接管理 Agent 团队、项目和 Profile。
+
+**项目级配置**（项目根目录 `.mcp.json`）：
+
+```json
+{
+  "mcpServers": {
+    "codes": {
+      "command": "codes",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+**用户级配置**（`~/.claude/claude_code_config.json`）：
+
+```json
+{
+  "mcpServers": {
+    "codes": {
+      "command": "codes",
+      "args": ["serve"]
+    }
+  }
+}
+```
+
+配置完成后，Claude Code 即可使用 29 个 MCP 工具：
+
+| 分类 | 工具 | 示例 |
+|------|------|------|
+| **配置管理** (10) | 项目、Profile、远程主机 | `list_projects`、`switch_profile`、`sync_remote` |
+| **Agent** (19) | 团队、任务、消息 | `team_create`、`task_create`、`message_send` |
+
+在 Claude Code 中使用：
+
+```
+你: 创建一个团队来重构认证模块
+
+Claude: 我来组建一个包含 coder 和 tester 的团队...
+        [调用 team_create, agent_add, task_create 工具]
+
+你: 进度如何？
+
+Claude: [调用 team_status 工具]
+        coder 已完成 2/3 个任务。tester 正在等待任务 #3 完成。
+```
+
+## 快速开始：Agent 团队
+
+```bash
+# 创建团队和 Agent
+codes agent team create myteam --workdir ~/Projects/myproject
+codes agent add myteam coder --role "implementation" --model sonnet
+codes agent add myteam tester --role "testing" --model sonnet
+
+# 启动 Agent 并创建任务
+codes agent start-all myteam
+codes agent task create myteam "Implement login API" --assign coder --priority high
+codes agent task create myteam "Write login tests" --assign tester --blocked-by 1
+
+# 查看状态和清理
+codes agent status myteam
+codes agent stop-all myteam
+```
+
+### 工作原理
+
+Agent 以独立守护进程运行，每 3 秒轮询共享的文件任务队列。每个 Agent 通过启动 Claude CLI 子进程执行任务，并自动向团队汇报结果。
+
+所有状态以 JSON 文件存储在 `~/.codes/teams/<name>/` 下 — 无需数据库或消息中间件。文件系统原子重命名保证并发安全。
+
+## 命令参考
+
+```
+codes                                    # 启动 TUI（检测到 TTY 时）
+codes init [--yes]                       # 安装二进制文件 + shell 补全
+codes start <路径|别名>                   # 在指定目录启动 Claude（别名: s）
+codes version / update                   # 版本信息 / 更新 Claude CLI
+```
+
+### Profile 管理 (`codes profile`，别名: `pf`)
+
+```bash
+codes profile add                        # 交互式添加 Profile
+codes profile select                     # 切换当前 Profile
+codes profile test [name]                # 测试连接
+codes profile list / remove <name>
+```
+
+### 项目别名 (`codes project`，别名: `p`)
+
+```bash
+codes project add [name] [path]          # 添加项目别名
+codes project list / remove <name>
+```
+
+### 配置 (`codes config`，别名: `c`)
+
+```bash
+codes config get [key]                   # 查看配置
+codes config set <key> <value>           # 设置值
+codes config list <key>                  # 列出可选值
+codes config reset [key]                 # 重置为默认
+```
+
+| 配置项 | 可选值 | 说明 |
+|--------|--------|------|
+| `default-behavior` | `current`、`last`、`home` | 启动目录 |
+| `skip-permissions` | `true`、`false` | 跳过权限确认 |
+| `terminal` | `terminal`、`iterm`、`warp` | 终端模拟器 |
+
+### Agent 团队 (`codes agent`，别名: `a`)
+
+```bash
+# 团队
+codes agent team create <name> [--workdir <路径>] [--description <描述>]
+codes agent team list / info <name> / delete <name>
+codes agent status <name>                # 团队仪表盘
+
+# Agent
+codes agent add <team> <name> [--role <角色>] [--model <模型>] [--type worker|leader]
+codes agent remove <team> <name>
+codes agent start|stop <team> <name>
+codes agent start-all|stop-all <team>
+
+# 任务
+codes agent task create <team> <主题> [--assign <agent>] [--priority high|normal|low] [--blocked-by <ids>]
+codes agent task list <team> [--status <状态>] [--owner <agent>]
+codes agent task get <team> <id> / cancel <team> <id>
+
+# 消息
+codes agent message send <team> <内容> --from <agent> [--to <agent>]
+codes agent message list <team> --agent <name>
+```
+
+### 远程主机 (`codes remote`，别名: `r`)
+
+```bash
+codes remote add <name> <user@host>
+codes remote list / status <name>
+codes remote setup <name> / ssh <name>
+```
+
+## 配置文件
+
+配置文件位置：`~/.codes/config.json`（回退：`./config.json`）
+
+```json
+{
+  "profiles": [
+    {
+      "name": "work",
+      "env": {
+        "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
+        "ANTHROPIC_AUTH_TOKEN": "sk-ant-xxxxx"
+      }
+    }
+  ],
+  "default": "work",
+  "defaultBehavior": "current",
+  "terminal": "terminal",
+  "projects": { "my-project": "/path/to/project" }
+}
+```
+
+<details>
+<summary>支持的环境变量</summary>
+
+| 变量 | 说明 |
+|------|------|
+| `ANTHROPIC_BASE_URL` | API 端点地址 |
+| `ANTHROPIC_AUTH_TOKEN` | 认证 Token |
+| `ANTHROPIC_API_KEY` | API Key（替代认证方式） |
+| `ANTHROPIC_MODEL` | 默认模型 |
+| `ANTHROPIC_DEFAULT_HAIKU_MODEL` | Haiku 模型覆盖 |
+| `ANTHROPIC_DEFAULT_SONNET_MODEL` | Sonnet 模型覆盖 |
+| `ANTHROPIC_DEFAULT_OPUS_MODEL` | Opus 模型覆盖 |
+| `MAX_THINKING_TOKENS` | 最大思考 Token 数 |
+| `HTTP_PROXY` / `HTTPS_PROXY` | 代理设置 |
+
+</details>
+
+## 开发
+
+```
+codes/
+├── cmd/codes/          # 入口
+├── internal/
+│   ├── agent/          # Agent 团队：守护进程、任务执行、存储
+│   ├── mcp/            # MCP Server（29 工具，stdio 传输）
+│   ├── tui/            # 交互式 TUI（bubbletea）
+│   ├── commands/       # Cobra CLI 命令
+│   ├── config/         # 配置管理
+│   ├── session/        # 终端会话管理
+│   ├── remote/         # SSH 远程管理
+│   └── ui/             # CLI 输出工具
+└── .github/workflows/  # CI/CD
+```
+
+```bash
+make build    # 构建
+make test     # 测试
+go vet ./...  # 代码检查
+```
+
+## 许可证
+
+[MIT License](LICENSE)
