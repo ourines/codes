@@ -120,46 +120,20 @@ jobs:
           fi
 
           echo "### Platforms"
-          echo "- Linux (amd64, arm64)"
+          echo "- Linux (amd64, arm64, arm, 386, mips, mipsle, mips64, mips64le, ppc64le, s390x, riscv64)"
           echo "- macOS (amd64, arm64)"
-          echo "- Windows (amd64, arm64)"
+          echo "- Windows (amd64, arm64, 386)"
+          echo "- FreeBSD (amd64, arm64)"
+          echo "- OpenBSD (amd64)"
+          echo "- NetBSD (amd64)"
 
           echo 'CHANGELOG_EOF'
         } >> $GITHUB_OUTPUT
 
-  build:
+  build-cross:
     needs: check
     if: needs.check.outputs.should_release == 'true'
-    strategy:
-      matrix:
-        include:
-          - platform: ubuntu-latest
-            goos: linux
-            goarch: amd64
-            can_test: true
-          - platform: ubuntu-latest
-            goos: linux
-            goarch: arm64
-            can_test: false
-          - platform: windows-latest
-            goos: windows
-            goarch: amd64
-            can_test: true
-          - platform: windows-latest
-            goos: windows
-            goarch: arm64
-            can_test: false
-          - platform: macos-latest
-            goos: darwin
-            goarch: amd64
-            can_test: false
-          - platform: macos-latest
-            goos: darwin
-            goarch: arm64
-            can_test: true
-
-    runs-on: ${{ matrix.platform }}
-
+    runs-on: ubuntu-latest
     steps:
     - name: Checkout code
       uses: actions/checkout@v4
@@ -173,11 +147,8 @@ jobs:
     - name: Install dependencies
       run: go mod download
 
-    - name: Build
-      shell: bash
+    - name: Build all non-darwin targets
       env:
-        GOOS: ${{ matrix.goos }}
-        GOARCH: ${{ matrix.goarch }}
         CGO_ENABLED: '0'
       run: |
         VERSION=${{ needs.check.outputs.next_version }}
@@ -185,35 +156,124 @@ jobs:
         DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
         LDFLAGS="-s -w -X codes/internal/commands.Version=${VERSION} -X codes/internal/commands.Commit=${COMMIT} -X codes/internal/commands.Date=${DATE}"
 
-        if [ "${{ matrix.goos }}" = "windows" ]; then
-          go build -ldflags "$LDFLAGS" -o codes.exe ./cmd/codes
-        else
-          go build -ldflags "$LDFLAGS" -o codes ./cmd/codes
-        fi
+        # Define targets: GOOS:GOARCH[:extra_env]
+        TARGETS=(
+          "linux:amd64"
+          "linux:arm64"
+          "linux:arm:GOARM=6"
+          "linux:386"
+          "linux:mips:GOMIPS=softfloat"
+          "linux:mipsle:GOMIPS=softfloat"
+          "linux:mips64"
+          "linux:mips64le"
+          "linux:ppc64le"
+          "linux:s390x"
+          "linux:riscv64"
+          "windows:amd64"
+          "windows:arm64"
+          "windows:386"
+          "freebsd:amd64"
+          "freebsd:arm64"
+          "openbsd:amd64"
+          "netbsd:amd64"
+        )
 
-    - name: Test
-      if: matrix.can_test
-      shell: bash
+        for target in "${TARGETS[@]}"; do
+          IFS=':' read -r os arch extra <<< "$target"
+          echo "==> Building ${os}/${arch} ${extra:+($extra)}"
+
+          # Set extra env vars if any
+          EXTRA_ENV=""
+          if [ -n "$extra" ]; then
+            export ${extra}
+            EXTRA_ENV="$extra"
+          fi
+
+          OUTPUT="codes"
+          if [ "$os" = "windows" ]; then
+            OUTPUT="codes.exe"
+          fi
+
+          GOOS=$os GOARCH=$arch go build -ldflags "$LDFLAGS" -o "dist/codes-${os}-${arch}/${OUTPUT}" ./cmd/codes
+
+          # Unset extra env vars
+          if [ -n "$EXTRA_ENV" ]; then
+            unset ${EXTRA_ENV%%=*}
+          fi
+
+          echo "    OK: dist/codes-${os}-${arch}/${OUTPUT}"
+        done
+
+        echo ""
+        echo "==> All builds completed:"
+        ls -la dist/*/
+
+    - name: Smoke test linux-amd64
       run: |
-        if [ "${{ matrix.goos }}" = "windows" ]; then
-          ./codes.exe version
-        else
-          ./codes version
-        fi
+        chmod +x dist/codes-linux-amd64/codes
+        dist/codes-linux-amd64/codes version
 
-    - name: Sign macOS binary
-      if: matrix.goos == 'darwin'
-      run: codesign --force --sign - codes
-
-    - name: Upload artifact
+    - name: Upload artifacts
       uses: actions/upload-artifact@v4
       with:
-        name: codes-${{ matrix.goos }}-${{ matrix.goarch }}
-        path: codes${{ matrix.goos == 'windows' && '.exe' || '' }}
+        name: cross-binaries
+        path: dist/
+        retention-days: 7
+
+  build-darwin:
+    needs: check
+    if: needs.check.outputs.should_release == 'true'
+    runs-on: macos-latest
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Setup Go
+      uses: actions/setup-go@v5
+      with:
+        go-version: '1.24.x'
+        cache: false
+
+    - name: Install dependencies
+      run: go mod download
+
+    - name: Build darwin targets
+      env:
+        CGO_ENABLED: '0'
+      run: |
+        VERSION=${{ needs.check.outputs.next_version }}
+        COMMIT=$(git rev-parse --short HEAD)
+        DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+        LDFLAGS="-s -w -X codes/internal/commands.Version=${VERSION} -X codes/internal/commands.Commit=${COMMIT} -X codes/internal/commands.Date=${DATE}"
+
+        for arch in amd64 arm64; do
+          echo "==> Building darwin/${arch}"
+          GOOS=darwin GOARCH=$arch go build -ldflags "$LDFLAGS" -o "dist/codes-darwin-${arch}/codes" ./cmd/codes
+          echo "    OK"
+        done
+
+    - name: Sign macOS binaries
+      run: |
+        for arch in amd64 arm64; do
+          echo "==> Signing darwin/${arch}"
+          codesign --force --sign - "dist/codes-darwin-${arch}/codes"
+        done
+
+    - name: Smoke test native binary
+      run: |
+        # macos-latest is arm64, test that binary
+        chmod +x dist/codes-darwin-arm64/codes
+        dist/codes-darwin-arm64/codes version
+
+    - name: Upload artifacts
+      uses: actions/upload-artifact@v4
+      with:
+        name: darwin-binaries
+        path: dist/
         retention-days: 7
 
   release:
-    needs: [check, build]
+    needs: [check, build-cross, build-darwin]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -221,24 +281,54 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
 
-    - name: Download all artifacts
+    - name: Download cross-compiled binaries
       uses: actions/download-artifact@v4
       with:
-        path: artifacts
+        name: cross-binaries
+        path: dist
 
-    - name: Prepare release files
+    - name: Download darwin binaries
+      uses: actions/download-artifact@v4
+      with:
+        name: darwin-binaries
+        path: dist
+
+    - name: Package release archives
       run: |
+        VERSION=${{ needs.check.outputs.next_version }}
         mkdir -p release
-        for dir in artifacts/codes-*; do
-          platform=$(basename $dir | sed 's/codes-//')
-          if [ -f "$dir/codes.exe" ]; then
-            mv "$dir/codes.exe" "release/codes-$platform.exe"
-          elif [ -f "$dir/codes" ]; then
-            mv "$dir/codes" "release/codes-$platform"
-            chmod +x "release/codes-$platform"
+
+        for dir in dist/codes-*; do
+          [ -d "$dir" ] || continue
+          target=$(basename "$dir" | sed 's/codes-//')
+          os=$(echo "$target" | cut -d- -f1)
+          arch=$(echo "$target" | cut -d- -f2)
+
+          if [ "$os" = "windows" ]; then
+            # ZIP for Windows
+            ARCHIVE="codes-${VERSION}-${os}-${arch}.zip"
+            echo "==> Packaging ${ARCHIVE}"
+            (cd "$dir" && zip -q "${OLDPWD}/release/${ARCHIVE}" codes.exe)
+          else
+            # tar.gz for Unix
+            ARCHIVE="codes-${VERSION}-${os}-${arch}.tar.gz"
+            echo "==> Packaging ${ARCHIVE}"
+            chmod +x "$dir/codes"
+            tar -czf "release/${ARCHIVE}" -C "$dir" codes
           fi
         done
-        ls -la release/
+
+        echo ""
+        echo "==> All archives:"
+        ls -lh release/
+
+    - name: Generate checksums
+      run: |
+        VERSION=${{ needs.check.outputs.next_version }}
+        cd release
+        sha256sum codes-${VERSION}-* > "codes-${VERSION}-checksums.txt"
+        echo "==> Checksums:"
+        cat "codes-${VERSION}-checksums.txt"
 
     - name: Create release
       uses: softprops/action-gh-release@v2
