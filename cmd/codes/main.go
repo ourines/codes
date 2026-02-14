@@ -34,6 +34,7 @@ func init() {
 	rootCmd.AddCommand(commands.ServeCmd)
 	rootCmd.AddCommand(commands.RemoteCmd)
 	rootCmd.AddCommand(commands.ClaudeCmd)
+	rootCmd.AddCommand(commands.AgentCmd)
 
 	// 设置默认运行时行为
 	rootCmd.Run = func(cmd *cobra.Command, args []string) {
