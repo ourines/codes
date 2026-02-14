@@ -132,7 +132,7 @@ func TestTaskCRUD(t *testing.T) {
 	CreateTeam("task-team", "", "")
 
 	// Create tasks
-	t1, err := CreateTask("task-team", "First task", "do something", "", nil, "")
+	t1, err := CreateTask("task-team", "First task", "do something", "", nil, "", "", "")
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -146,7 +146,7 @@ func TestTaskCRUD(t *testing.T) {
 		t.Errorf("Priority = %s, want %s (default)", t1.Priority, PriorityNormal)
 	}
 
-	t2, err := CreateTask("task-team", "Second task", "", "worker1", nil, "")
+	t2, err := CreateTask("task-team", "Second task", "", "worker1", nil, "", "", "")
 	if err != nil {
 		t.Fatalf("CreateTask 2: %v", err)
 	}
@@ -221,8 +221,8 @@ func TestTaskBlocking(t *testing.T) {
 
 	CreateTeam("block-team", "", "")
 
-	t1, _ := CreateTask("block-team", "Dep task", "", "", nil, "")
-	t2, _ := CreateTask("block-team", "Blocked task", "", "", []int{t1.ID}, "")
+	t1, _ := CreateTask("block-team", "Dep task", "", "", nil, "", "", "")
+	t2, _ := CreateTask("block-team", "Blocked task", "", "", []int{t1.ID}, "", "", "")
 
 	blocked, err := IsTaskBlocked("block-team", t2)
 	if err != nil {
@@ -381,10 +381,10 @@ func TestTaskPriority(t *testing.T) {
 	CreateTeam("prio-team", "", "")
 
 	// Create tasks with different priorities
-	CreateTask("prio-team", "Low priority", "", "", nil, PriorityLow)
-	CreateTask("prio-team", "Normal priority", "", "", nil, PriorityNormal)
-	CreateTask("prio-team", "High priority", "", "", nil, PriorityHigh)
-	CreateTask("prio-team", "Default priority", "", "", nil, "")
+	CreateTask("prio-team", "Low priority", "", "", nil, PriorityLow, "", "")
+	CreateTask("prio-team", "Normal priority", "", "", nil, PriorityNormal, "", "")
+	CreateTask("prio-team", "High priority", "", "", nil, PriorityHigh, "", "")
+	CreateTask("prio-team", "Default priority", "", "", nil, "", "", "")
 
 	tasks, err := ListTasks("prio-team", "", "")
 	if err != nil {
@@ -465,7 +465,7 @@ func TestTaskDefaultPriority(t *testing.T) {
 
 	CreateTeam("default-prio", "", "")
 
-	task, err := CreateTask("default-prio", "Test", "", "", nil, "")
+	task, err := CreateTask("default-prio", "Test", "", "", nil, "", "", "")
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}
@@ -473,7 +473,7 @@ func TestTaskDefaultPriority(t *testing.T) {
 		t.Errorf("Default priority = %s, want %s", task.Priority, PriorityNormal)
 	}
 
-	task2, err := CreateTask("default-prio", "High", "", "", nil, PriorityHigh)
+	task2, err := CreateTask("default-prio", "High", "", "", nil, PriorityHigh, "", "")
 	if err != nil {
 		t.Fatalf("CreateTask: %v", err)
 	}

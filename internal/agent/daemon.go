@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"codes/internal/config"
 	"context"
 	"fmt"
 	"log"
@@ -20,6 +21,7 @@ type Daemon struct {
 
 	pollInterval time.Duration
 	logger       *log.Logger
+	msgSessionID string // established message session ID (set after first response)
 }
 
 // NewDaemon creates a new agent daemon.
@@ -59,20 +61,35 @@ func NewDaemon(teamName, agentName string) (*Daemon, error) {
 // buildSystemPrompt generates a system prompt that gives the Claude subprocess
 // awareness of its role, team context, and working conventions.
 func (d *Daemon) buildSystemPrompt() string {
+	return d.buildSystemPromptWithContext("", d.WorkDir)
+}
+
+// buildSystemPromptWithContext generates a system prompt with optional project context.
+// When projectName is non-empty, additional project context is included in the prompt.
+func (d *Daemon) buildSystemPromptWithContext(projectName, workDir string) string {
 	role := d.Role
 	if role == "" {
 		role = "general-purpose worker"
 	}
-	return fmt.Sprintf(
+
+	var sb strings.Builder
+	fmt.Fprintf(&sb,
 		"You are %q, a team member in team %q.\n"+
 			"Your role: %s\n"+
-			"Working directory: %s\n\n"+
-			"Instructions:\n"+
-			"- Complete your assigned tasks thoroughly and report results clearly.\n"+
-			"- If a task is unclear, do your best interpretation and note any assumptions.\n"+
-			"- Focus on the task at hand. Be concise in responses.",
-		d.AgentName, d.TeamName, role, d.WorkDir,
+			"Working directory: %s\n",
+		d.AgentName, d.TeamName, role, workDir,
 	)
+
+	if projectName != "" {
+		sb.WriteString(fmt.Sprintf("Project: %s\n", projectName))
+	}
+
+	sb.WriteString("\nInstructions:\n")
+	sb.WriteString("- Complete your assigned tasks thoroughly and report results clearly.\n")
+	sb.WriteString("- If a task is unclear, do your best interpretation and note any assumptions.\n")
+	sb.WriteString("- Focus on the task at hand. Be concise in responses.")
+
+	return sb.String()
 }
 
 // Run starts the daemon poll loop. It blocks until the context is cancelled
@@ -195,11 +212,14 @@ func (d *Daemon) processMessages(ctx context.Context, state *AgentState) {
 		opts := RunOptions{
 			Prompt:       prompt,
 			WorkDir:      d.WorkDir,
-			SessionID:    state.SessionID,
-			Resume:       true,
 			Model:        d.Model,
 			SystemPrompt: d.buildSystemPrompt(),
 			PermMode:     "dangerously-skip-permissions",
+		}
+		// Resume existing message session if one was established
+		if d.msgSessionID != "" {
+			opts.SessionID = d.msgSessionID
+			opts.Resume = true
 		}
 
 		result, err := RunClaude(ctx, opts)
@@ -208,6 +228,11 @@ func (d *Daemon) processMessages(ctx context.Context, state *AgentState) {
 			SendMessage(d.TeamName, d.AgentName, msg.From,
 				fmt.Sprintf("[error] Failed to process your message: %v", err))
 			continue
+		}
+
+		// Track the session ID for future message continuity
+		if result.SessionID != "" {
+			d.msgSessionID = result.SessionID
 		}
 
 		// Send the response back to the sender
@@ -290,9 +315,6 @@ func (d *Daemon) executeTask(ctx context.Context, task *Task, state *AgentState)
 	// Transition to running
 	_, err := UpdateTask(d.TeamName, task.ID, func(t *Task) error {
 		t.Status = TaskRunning
-		if t.SessionID == "" {
-			t.SessionID = generateID()
-		}
 		return nil
 	})
 	if err != nil {
@@ -306,16 +328,35 @@ func (d *Daemon) executeTask(ctx context.Context, task *Task, state *AgentState)
 		prompt = fmt.Sprintf("%s\n\n%s", task.Subject, task.Description)
 	}
 
-	// Reload task to get sessionID
-	task, _ = GetTask(d.TeamName, task.ID)
+	// Resolve task-specific working directory:
+	//   1. Explicit task.WorkDir takes highest precedence
+	//   2. task.Project resolves via config.GetProjectPath()
+	//   3. Fall back to daemon's default WorkDir
+	taskWorkDir := d.WorkDir
+	taskProject := ""
+	if task.WorkDir != "" {
+		taskWorkDir = task.WorkDir
+	} else if task.Project != "" {
+		if projectPath, ok := config.GetProjectPath(task.Project); ok {
+			taskWorkDir = projectPath
+			taskProject = task.Project
+			d.logger.Printf("task %d: project %q → %s", task.ID, task.Project, projectPath)
+		} else {
+			d.logger.Printf("warning: project %q not found in config, using default workdir", task.Project)
+		}
+	}
 
 	opts := RunOptions{
 		Prompt:       prompt,
-		WorkDir:      d.WorkDir,
-		SessionID:    task.SessionID,
+		WorkDir:      taskWorkDir,
 		Model:        d.Model,
-		SystemPrompt: d.buildSystemPrompt(),
+		SystemPrompt: d.buildSystemPromptWithContext(taskProject, taskWorkDir),
 		PermMode:     "dangerously-skip-permissions",
+	}
+	// Resume existing task session if available (for retries/continuations)
+	if task.SessionID != "" {
+		opts.SessionID = task.SessionID
+		opts.Resume = true
 	}
 
 	result, err := RunClaude(ctx, opts)

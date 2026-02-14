@@ -9,7 +9,7 @@ import (
 )
 
 // CreateTask creates a new task in a team.
-func CreateTask(teamName, subject, description, owner string, blockedBy []int, priority TaskPriority) (*Task, error) {
+func CreateTask(teamName, subject, description, owner string, blockedBy []int, priority TaskPriority, project, workDir string) (*Task, error) {
 	if err := ensureDir(tasksDir(teamName)); err != nil {
 		return nil, err
 	}
@@ -36,6 +36,8 @@ func CreateTask(teamName, subject, description, owner string, blockedBy []int, p
 		Status:      status,
 		Priority:    priority,
 		Owner:       owner,
+		Project:     project,
+		WorkDir:     workDir,
 		BlockedBy:   blockedBy,
 		CreatedAt:   now,
 		UpdatedAt:   now,

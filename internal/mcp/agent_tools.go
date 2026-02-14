@@ -258,6 +258,8 @@ type taskCreateInput struct {
 	Assign      string `json:"assign,omitempty" jsonschema:"Agent name to assign the task to"`
 	BlockedBy   []int  `json:"blockedBy,omitempty" jsonschema:"Task IDs that must complete before this task"`
 	Priority    string `json:"priority,omitempty" jsonschema:"Task priority: high, normal, or low (default: normal)"`
+	Project     string `json:"project,omitempty" jsonschema:"Project name to execute in (registered via add_project)"`
+	WorkDir     string `json:"workDir,omitempty" jsonschema:"Explicit working directory (overrides project)"`
 }
 
 type taskCreateOutput struct {
@@ -268,7 +270,7 @@ func taskCreateHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input t
 	if input.Team == "" || input.Subject == "" {
 		return nil, taskCreateOutput{}, fmt.Errorf("team and subject are required")
 	}
-	task, err := agent.CreateTask(input.Team, input.Subject, input.Description, input.Assign, input.BlockedBy, agent.TaskPriority(input.Priority))
+	task, err := agent.CreateTask(input.Team, input.Subject, input.Description, input.Assign, input.BlockedBy, agent.TaskPriority(input.Priority), input.Project, input.WorkDir)
 	if err != nil {
 		return nil, taskCreateOutput{}, err
 	}

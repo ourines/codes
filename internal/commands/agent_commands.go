@@ -221,8 +221,8 @@ func RunAgentDaemon(teamName, agentName string) {
 
 // -- Task commands --
 
-func RunAgentTaskCreate(teamName, subject, description, assign string, blockedBy []int, priority string) {
-	task, err := agent.CreateTask(teamName, subject, description, assign, blockedBy, agent.TaskPriority(priority))
+func RunAgentTaskCreate(teamName, subject, description, assign string, blockedBy []int, priority, project, workDir string) {
+	task, err := agent.CreateTask(teamName, subject, description, assign, blockedBy, agent.TaskPriority(priority), project, workDir)
 	if err != nil {
 		ui.ShowError("Failed to create task", err)
 		return
@@ -235,6 +235,9 @@ func RunAgentTaskCreate(teamName, subject, description, assign string, blockedBy
 	fmt.Printf("Task #%d created: %s\n", task.ID, task.Subject)
 	if task.Owner != "" {
 		fmt.Printf("  Assigned to: %s\n", task.Owner)
+	}
+	if task.Project != "" {
+		fmt.Printf("  Project: %s\n", task.Project)
 	}
 }
 

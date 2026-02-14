@@ -125,7 +125,9 @@ var agentTaskCreateCmd = &cobra.Command{
 		assign, _ := cmd.Flags().GetString("assign")
 		blockedBy, _ := cmd.Flags().GetIntSlice("blocked-by")
 		priority, _ := cmd.Flags().GetString("priority")
-		RunAgentTaskCreate(args[0], args[1], desc, assign, blockedBy, priority)
+		project, _ := cmd.Flags().GetString("project")
+		workDir, _ := cmd.Flags().GetString("work-dir")
+		RunAgentTaskCreate(args[0], args[1], desc, assign, blockedBy, priority, project, workDir)
 	},
 }
 
@@ -239,6 +241,8 @@ func init() {
 	agentTaskCreateCmd.Flags().String("assign", "", "Assign to agent")
 	agentTaskCreateCmd.Flags().IntSlice("blocked-by", nil, "Task IDs that block this task")
 	agentTaskCreateCmd.Flags().String("priority", "normal", "Task priority: high, normal, or low")
+	agentTaskCreateCmd.Flags().StringP("project", "p", "", "Project name to execute in (registered via codes project add)")
+	agentTaskCreateCmd.Flags().String("work-dir", "", "Explicit working directory (overrides project)")
 	agentTaskListCmd.Flags().String("status", "", "Filter by status")
 	agentTaskListCmd.Flags().String("owner", "", "Filter by owner")
 	agentTaskCmd.AddCommand(agentTaskCreateCmd, agentTaskListCmd, agentTaskGetCmd, agentTaskCancelCmd)

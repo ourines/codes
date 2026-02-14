@@ -58,6 +58,8 @@ type Task struct {
 	Status      TaskStatus   `json:"status"`
 	Priority    TaskPriority `json:"priority,omitempty"`
 	Owner       string       `json:"owner,omitempty"`
+	Project     string       `json:"project,omitempty"`  // registered project name for WorkDir resolution
+	WorkDir     string       `json:"workDir,omitempty"`  // explicit working directory (overrides project)
 	BlockedBy   []int        `json:"blockedBy,omitempty"`
 	SessionID   string       `json:"sessionId,omitempty"`
 	Result      string       `json:"result,omitempty"`

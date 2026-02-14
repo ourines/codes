@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "codes": {
+      "command": "/Users/ourines/Projects/codes/codes",
+      "args": ["serve"]
+    }
+  }
+}
