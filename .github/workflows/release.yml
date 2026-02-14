@@ -201,6 +201,10 @@ jobs:
           ./codes version
         fi
 
+    - name: Sign macOS binary
+      if: matrix.goos == 'darwin'
+      run: codesign --force --sign - codes
+
     - name: Upload artifact
       uses: actions/upload-artifact@v4
       with:
