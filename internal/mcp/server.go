@@ -67,5 +67,8 @@ func RunServer() error {
 		Description: "Sync local API profiles and settings to a remote SSH host",
 	}, syncRemoteHandler)
 
+	// Agent team tools
+	registerAgentTools(server)
+
 	return server.Run(context.Background(), &mcpsdk.StdioTransport{})
 }
