@@ -77,16 +77,29 @@ func InstallOnRemote(host *config.RemoteHost) (string, error) {
 		return "", fmt.Errorf("unsupported platform: %s/%s", status.OS, status.Arch)
 	}
 
-	downloadURL := fmt.Sprintf(
-		"https://github.com/ourines/codes/releases/latest/download/codes-%s-%s",
-		goOS, goArch,
-	)
-
-	// Non-interactive install: download to ~/bin, no sudo, no init
+	// Non-interactive install: resolve latest version, download tar.gz, extract to ~/bin
 	installScript := fmt.Sprintf(`
 set -e
 mkdir -p ~/bin
-curl -fsSL '%s' -o ~/bin/codes
+
+# Resolve latest version
+VERSION=$(curl -fsSL "https://api.github.com/repos/ourines/codes/releases/latest" \
+    | grep '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+if [ -z "$VERSION" ]; then
+    echo "Failed to determine latest version" >&2
+    exit 1
+fi
+echo "Latest version: $VERSION"
+
+ARCHIVE="codes-${VERSION}-%s-%s.tar.gz"
+URL="https://github.com/ourines/codes/releases/download/${VERSION}/${ARCHIVE}"
+
+TMPDIR=$(mktemp -d)
+trap 'rm -rf "$TMPDIR"' EXIT
+
+curl -fsSL "$URL" -o "$TMPDIR/$ARCHIVE"
+tar -xzf "$TMPDIR/$ARCHIVE" -C "$TMPDIR"
+mv "$TMPDIR/codes" ~/bin/codes
 chmod +x ~/bin/codes
 
 # Ensure ~/bin is in PATH for future logins
@@ -100,7 +113,7 @@ if ! echo "$PATH" | grep -q "$HOME/bin"; then
 fi
 
 ~/bin/codes version
-`, downloadURL)
+`, goOS, goArch)
 
 	out, err := RunSSH(host, installScript)
 	if err != nil {
@@ -179,6 +192,12 @@ func normalizeOS(s string) string {
 		return "linux"
 	case "darwin":
 		return "darwin"
+	case "freebsd":
+		return "freebsd"
+	case "openbsd":
+		return "openbsd"
+	case "netbsd":
+		return "netbsd"
 	default:
 		return ""
 	}
@@ -191,6 +210,24 @@ func normalizeArch(s string) string {
 		return "amd64"
 	case "aarch64", "arm64":
 		return "arm64"
+	case "armv6l", "armv7l":
+		return "arm"
+	case "i686", "i386":
+		return "386"
+	case "mips":
+		return "mips"
+	case "mipsel":
+		return "mipsle"
+	case "mips64":
+		return "mips64"
+	case "mips64el":
+		return "mips64le"
+	case "ppc64le":
+		return "ppc64le"
+	case "s390x":
+		return "s390x"
+	case "riscv64":
+		return "riscv64"
 	default:
 		return ""
 	}

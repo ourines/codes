@@ -34,17 +34,29 @@ need() {
 
 detect_os() {
     case "$(uname -s)" in
-        Linux*)  echo "linux" ;;
-        Darwin*) echo "darwin" ;;
-        *)       die "Unsupported OS: $(uname -s)" ;;
+        Linux*)   echo "linux" ;;
+        Darwin*)  echo "darwin" ;;
+        FreeBSD*) echo "freebsd" ;;
+        OpenBSD*) echo "openbsd" ;;
+        NetBSD*)  echo "netbsd" ;;
+        *)        die "Unsupported OS: $(uname -s)" ;;
     esac
 }
 
 detect_arch() {
     case "$(uname -m)" in
-        x86_64|amd64)  echo "amd64" ;;
-        aarch64|arm64) echo "arm64" ;;
-        *)             die "Unsupported architecture: $(uname -m)" ;;
+        x86_64|amd64)       echo "amd64" ;;
+        aarch64|arm64)      echo "arm64" ;;
+        armv6l|armv7l|arm*) echo "arm" ;;
+        i686|i386)          echo "386" ;;
+        mips)               echo "mips" ;;
+        mipsel)             echo "mipsle" ;;
+        mips64)             echo "mips64" ;;
+        mips64el)           echo "mips64le" ;;
+        ppc64le)            echo "ppc64le" ;;
+        s390x)              echo "s390x" ;;
+        riscv64)            echo "riscv64" ;;
+        *)                  die "Unsupported architecture: $(uname -m)" ;;
     esac
 }
 
@@ -52,33 +64,46 @@ detect_arch() {
 
 main() {
     need curl
+    need tar
 
     OS="$(detect_os)"
     ARCH="$(detect_arch)"
 
     info "Detected platform: ${OS}/${ARCH}"
 
-    URL="https://github.com/${REPO}/releases/latest/download/${BINARY}-${OS}-${ARCH}"
-    TMPFILE="$(mktemp)"
-    trap 'rm -f "$TMPFILE"' EXIT
+    # Resolve latest version from GitHub API
+    info "Fetching latest version..."
+    VERSION=$(curl -fsSL "https://api.github.com/repos/${REPO}/releases/latest" \
+        | grep '"tag_name"' | sed -E 's/.*"tag_name": *"([^"]+)".*/\1/')
+    if [ -z "$VERSION" ]; then
+        die "Failed to determine latest version"
+    fi
+    info "Latest version: ${VERSION}"
 
-    info "Downloading ${BINARY} from ${URL}..."
-    if ! curl -fSL --progress-bar -o "$TMPFILE" "$URL"; then
+    ARCHIVE="codes-${VERSION}-${OS}-${ARCH}.tar.gz"
+    URL="https://github.com/${REPO}/releases/download/${VERSION}/${ARCHIVE}"
+    TMPDIR="$(mktemp -d)"
+    trap 'rm -rf "$TMPDIR"' EXIT
+
+    info "Downloading ${ARCHIVE}..."
+    if ! curl -fSL --progress-bar -o "${TMPDIR}/${ARCHIVE}" "$URL"; then
         die "Download failed. Check that a release exists for ${OS}/${ARCH}."
     fi
-
-    chmod +x "$TMPFILE"
     ok "Downloaded successfully"
+
+    # Extract binary from archive
+    tar -xzf "${TMPDIR}/${ARCHIVE}" -C "$TMPDIR"
+    chmod +x "${TMPDIR}/${BINARY}"
 
     # Try /usr/local/bin first, sudo if needed, fall back to ~/bin
     installed=false
     if [ -w "$INSTALL_DIR" ]; then
-        mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}"
+        mv "${TMPDIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
         ok "Installed to ${INSTALL_DIR}/${BINARY}"
         installed=true
     elif command -v sudo >/dev/null 2>&1; then
         info "Installing to ${INSTALL_DIR} (requires sudo)..."
-        if sudo mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}" 2>/dev/null; then
+        if sudo mv "${TMPDIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}" 2>/dev/null; then
             ok "Installed to ${INSTALL_DIR}/${BINARY}"
             installed=true
         fi
@@ -87,7 +112,7 @@ main() {
     if [ "$installed" = false ]; then
         INSTALL_DIR="${HOME}/bin"
         mkdir -p "$INSTALL_DIR"
-        mv "$TMPFILE" "${INSTALL_DIR}/${BINARY}"
+        mv "${TMPDIR}/${BINARY}" "${INSTALL_DIR}/${BINARY}"
         ok "Installed to ${INSTALL_DIR}/${BINARY}"
         case ":$PATH:" in
             *":${INSTALL_DIR}:"*) ;;
