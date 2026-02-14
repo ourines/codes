@@ -399,7 +399,7 @@ func (d *Daemon) reportTaskCompleted(task *Task, result string) {
 	SendTaskReport(d.TeamName, d.AgentName, "", MsgTaskCompleted, task.ID, content)
 
 	// Write notification file for external consumers
-	d.writeNotification(task, "completed")
+	d.writeNotification(task, "completed", result)
 }
 
 // reportTaskFailed broadcasts a task failure report to the team.
@@ -408,7 +408,7 @@ func (d *Daemon) reportTaskFailed(task *Task, errMsg string) {
 	SendTaskReport(d.TeamName, d.AgentName, "", MsgTaskFailed, task.ID, content)
 
 	// Write notification file for external consumers
-	d.writeNotification(task, "failed")
+	d.writeNotification(task, "failed", errMsg)
 }
 
 // taskNotification is the JSON structure written to ~/.codes/notifications/.
@@ -418,11 +418,13 @@ type taskNotification struct {
 	Subject   string `json:"subject"`
 	Status    string `json:"status"`
 	Agent     string `json:"agent"`
+	Result    string `json:"result,omitempty"`
+	Error     string `json:"error,omitempty"`
 	Timestamp string `json:"timestamp"`
 }
 
 // writeNotification writes a notification file for a completed or failed task.
-func (d *Daemon) writeNotification(task *Task, status string) {
+func (d *Daemon) writeNotification(task *Task, status, detail string) {
 	home, err := os.UserHomeDir()
 	if err != nil {
 		d.logger.Printf("notification: cannot get home dir: %v", err)
@@ -443,6 +445,11 @@ func (d *Daemon) writeNotification(task *Task, status string) {
 		Agent:     d.AgentName,
 		Timestamp: time.Now().UTC().Format(time.RFC3339),
 	}
+	if status == "completed" {
+		n.Result = truncate(detail, 500)
+	} else {
+		n.Error = detail
+	}
 
 	data, err := json.MarshalIndent(n, "", "  ")
 	if err != nil {
@@ -450,7 +457,8 @@ func (d *Daemon) writeNotification(task *Task, status string) {
 		return
 	}
 
-	filename := filepath.Join(dir, fmt.Sprintf("%s-%d.json", d.TeamName, task.ID))
+	// Use __ separator to avoid ambiguity when team name contains hyphens
+	filename := filepath.Join(dir, fmt.Sprintf("%s__%d.json", d.TeamName, task.ID))
 	if err := os.WriteFile(filename, data, 0644); err != nil {
 		d.logger.Printf("notification: write error: %v", err)
 	}

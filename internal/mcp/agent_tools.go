@@ -810,7 +810,14 @@ func teamWatchHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input te
 	}
 	iterations := timeout * 12 // 5-second intervals
 
-	cmd := fmt.Sprintf(`mkdir -p ~/.codes/notifications && echo "Monitoring agent notifications (timeout: %dm)..." && for i in $(seq 1 %d); do files=$(ls ~/.codes/notifications/*.json 2>/dev/null); if [ -n "$files" ]; then echo "=== Agent Notification ==="; for f in $files; do cat "$f"; echo ""; rm "$f"; done; fi; sleep 5; done && echo "Monitor timeout reached"`, timeout, iterations)
+	// Use find instead of ls to avoid TOCTOU races and handle filenames with spaces.
+	// The __ separator matches the updated writeNotification filename format.
+	filter := "*.json"
+	if input.Team != "" {
+		filter = fmt.Sprintf("%s__*.json", input.Team)
+	}
+
+	cmd := fmt.Sprintf(`mkdir -p ~/.codes/notifications && echo "Monitoring agent notifications (timeout: %dm)..." && for i in $(seq 1 %d); do found=0; for f in $(find ~/.codes/notifications -maxdepth 1 -name '%s' -type f 2>/dev/null); do echo "=== Agent Notification ==="; cat "$f" && rm -f "$f"; echo ""; found=1; done; sleep 5; done && echo "Monitor timeout reached"`, timeout, iterations, filter)
 
 	return nil, teamWatchOutput{
 		Command:     cmd,
