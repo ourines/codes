@@ -170,3 +170,10 @@ func AutoCheck(currentVer, mode string) {
 func printNotify(current, available string) {
 	fmt.Fprintf(os.Stderr, "\nℹ New version available: %s → %s. Run 'codes update' to upgrade.\n\n", current, available)
 }
+
+// GetCachedLatestVersion 读取本地缓存的更新状态，返回最新版本号。
+// 如果��有缓存或读取失败，返回空字符串。
+func GetCachedLatestVersion() string {
+	state, _ := loadState()
+	return state.LatestVersion
+}
