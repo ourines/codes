@@ -1,49 +1,33 @@
 package workflow
 
-// Workflow defines a reusable sequence of Claude prompts.
+// Workflow defines a reusable agent team template.
 type Workflow struct {
-	Name        string `yaml:"name" json:"name"`
-	Description string `yaml:"description,omitempty" json:"description,omitempty"`
-	Steps       []Step `yaml:"steps" json:"steps"`
-	BuiltIn     bool   `yaml:"-" json:"builtIn,omitempty"`
+	Name        string          `yaml:"name" json:"name"`
+	Description string          `yaml:"description,omitempty" json:"description,omitempty"`
+	Agents      []WorkflowAgent `yaml:"agents" json:"agents"`
+	Tasks       []WorkflowTask  `yaml:"tasks" json:"tasks"`
+	BuiltIn     bool            `yaml:"-" json:"builtIn,omitempty"`
 }
 
-// Step is a single unit of work within a workflow.
-type Step struct {
-	Name            string `yaml:"name" json:"name"`
-	Prompt          string `yaml:"prompt" json:"prompt"`
-	WaitForApproval bool   `yaml:"wait_for_approval,omitempty" json:"waitForApproval,omitempty"`
+// WorkflowAgent defines an agent within a workflow.
+type WorkflowAgent struct {
+	Name  string `yaml:"name" json:"name"`
+	Role  string `yaml:"role,omitempty" json:"role,omitempty"`
+	Model string `yaml:"model,omitempty" json:"model,omitempty"`
 }
 
-// WorkflowRun tracks the execution state of a workflow.
-type WorkflowRun struct {
-	ID          string       `json:"id"`          // Unique run ID (timestamp-based)
-	Workflow    *Workflow    `json:"workflow"`
-	CurrentStep int          `json:"currentStep"`
-	Status      string       `json:"status"` // "running", "paused", "completed", "failed", "aborted"
-	Results     []StepResult `json:"results"`
-	WorkDir     string       `json:"workDir,omitempty"`
-	Model       string       `json:"model,omitempty"`
-	StartedAt   string       `json:"startedAt,omitempty"`  // RFC3339 timestamp
-	CompletedAt string       `json:"completedAt,omitempty"` // RFC3339 timestamp
+// WorkflowTask defines a task to be created when the workflow runs.
+type WorkflowTask struct {
+	Subject   string `yaml:"subject" json:"subject"`
+	Assign    string `yaml:"assign,omitempty" json:"assign,omitempty"`
+	Prompt    string `yaml:"prompt" json:"prompt"`
+	Priority  string `yaml:"priority,omitempty" json:"priority,omitempty"`
+	BlockedBy []int  `yaml:"blocked_by,omitempty" json:"blockedBy,omitempty"` // 1-based index into Tasks
 }
 
-// StepResult holds the output of a completed step.
-type StepResult struct {
-	StepName       string  `json:"stepName"`
-	Result         string  `json:"result"`
-	Cost           float64 `json:"cost,omitempty"`
-	Error          string  `json:"error,omitempty"`
-	ApprovalStatus string  `json:"approvalStatus,omitempty"` // "approved", "rejected", "skipped"
-	Retries        int     `json:"retries,omitempty"`         // Number of retry attempts
+// WorkflowRunResult holds the result of launching a workflow as an agent team.
+type WorkflowRunResult struct {
+	TeamName string `json:"teamName"`
+	Agents   int    `json:"agentsStarted"`
+	Tasks    int    `json:"tasksCreated"`
 }
-
-// ApprovalDecision represents user's decision after reviewing a step result.
-type ApprovalDecision string
-
-const (
-	ApprovalApprove ApprovalDecision = "approve" // Continue to next step
-	ApprovalReject  ApprovalDecision = "reject"  // Retry current step
-	ApprovalSkip    ApprovalDecision = "skip"    // Skip current step and continue
-	ApprovalAbort   ApprovalDecision = "abort"   // Stop workflow execution
-)

@@ -1,7 +1,6 @@
 package tui
 
 import (
-	"context"
 	"fmt"
 	"os"
 	"strings"
@@ -20,7 +19,7 @@ type workflowsLoadedMsg struct {
 
 // workflowRunMsg is sent after a workflow run completes.
 type workflowRunMsg struct {
-	run *workflow.WorkflowRun
+	run *workflow.WorkflowRunResult
 	err error
 }
 
@@ -32,18 +31,14 @@ func loadWorkflowsCmd() tea.Cmd {
 	}
 }
 
-// runWorkflowCmd runs a workflow asynchronously.
+// runWorkflowCmd launches a workflow as an agent team (non-blocking).
 func runWorkflowCmd(wf *workflow.Workflow) tea.Cmd {
 	return func() tea.Msg {
 		dir, _ := os.Getwd()
-		// TUI runs in non-interactive mode: use auto-approval
-		run, err := workflow.RunWorkflow(context.Background(), wf, workflow.RunWorkflowOptions{
-			WorkDir:        dir,
-			Model:          "",
-			ApprovalPrompt: workflow.NewAutoApprovalPrompt(), // Auto-approve in TUI mode
-			MaxRetries:     3,
+		result, err := workflow.RunWorkflow(wf, workflow.RunWorkflowOptions{
+			WorkDir: dir,
 		})
-		return workflowRunMsg{run: run, err: err}
+		return workflowRunMsg{run: result, err: err}
 	}
 }
 
@@ -65,7 +60,7 @@ func (m Model) updateWorkflows(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "enter":
 		if m.workflowCursor < len(m.workflowList) {
 			wf := m.workflowList[m.workflowCursor]
-			m.statusMsg = fmt.Sprintf("running %s...", wf.Name)
+			m.statusMsg = fmt.Sprintf("launching %s...", wf.Name)
 			return m, runWorkflowCmd(&wf)
 		}
 	case "d":
@@ -89,7 +84,7 @@ func (m Model) updateWorkflows(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // renderWorkflowsView renders the workflows panel.
-func renderWorkflowsView(workflows []workflow.Workflow, run *workflow.WorkflowRun, cursor int, width, height int) string {
+func renderWorkflowsView(workflows []workflow.Workflow, run *workflow.WorkflowRunResult, cursor int, width, height int) string {
 	var b strings.Builder
 
 	// Left panel: workflow list
@@ -130,33 +125,15 @@ func renderWorkflowsView(workflows []workflow.Workflow, run *workflow.WorkflowRu
 	// Right panel: detail of selected workflow or run results
 	var rightContent strings.Builder
 
-	if run != nil && run.Status != "" {
-		// Show run results
-		rightContent.WriteString(detailLabelStyle.Render("Run: "+run.Workflow.Name))
+	if run != nil {
+		// Show run results (team launch info)
+		rightContent.WriteString(detailLabelStyle.Render("Launched"))
+		rightContent.WriteString("\n\n")
+		rightContent.WriteString(fmt.Sprintf("Team: %s\n", run.TeamName))
+		rightContent.WriteString(fmt.Sprintf("Agents started: %d\n", run.Agents))
+		rightContent.WriteString(fmt.Sprintf("Tasks created:  %d\n", run.Tasks))
 		rightContent.WriteString("\n")
-		rightContent.WriteString(fmt.Sprintf("Status: %s\n\n", run.Status))
-
-		for i, result := range run.Results {
-			icon := statusOkStyle.Render("✓")
-			if result.Error != "" {
-				icon = statusErrorStyle.Render("✗")
-			}
-			rightContent.WriteString(fmt.Sprintf("%s Step %d: %s\n", icon, i+1, result.StepName))
-			if result.Error != "" {
-				rightContent.WriteString(statusErrorStyle.Render("  "+result.Error) + "\n")
-			} else if result.Result != "" {
-				// Show truncated result
-				preview := result.Result
-				if len(preview) > rightWidth*3 {
-					preview = preview[:rightWidth*3] + "..."
-				}
-				rightContent.WriteString(formHintStyle.Render("  "+preview) + "\n")
-			}
-			if result.Cost > 0 {
-				rightContent.WriteString(fmt.Sprintf("  Cost: $%.4f\n", result.Cost))
-			}
-			rightContent.WriteString("\n")
-		}
+		rightContent.WriteString(formHintStyle.Render("Use 'codes agent status "+run.TeamName+"' to monitor") + "\n")
 	} else if cursor < len(workflows) {
 		// Show selected workflow detail
 		wf := workflows[cursor]
@@ -165,17 +142,37 @@ func renderWorkflowsView(workflows []workflow.Workflow, run *workflow.WorkflowRu
 		if wf.Description != "" {
 			rightContent.WriteString(wf.Description + "\n")
 		}
-		rightContent.WriteString(fmt.Sprintf("\nSteps: %d\n\n", len(wf.Steps)))
+		rightContent.WriteString(fmt.Sprintf("\nAgents: %d  Tasks: %d\n\n", len(wf.Agents), len(wf.Tasks)))
 
-		for i, step := range wf.Steps {
-			rightContent.WriteString(fmt.Sprintf("  %d. %s\n", i+1, detailLabelStyle.Render(step.Name)))
-			prompt := step.Prompt
-			if len(prompt) > rightWidth-6 {
-				prompt = prompt[:rightWidth-9] + "..."
+		// Show agents
+		if len(wf.Agents) > 0 {
+			rightContent.WriteString(detailLabelStyle.Render("Agents:") + "\n")
+			for _, a := range wf.Agents {
+				rightContent.WriteString(fmt.Sprintf("  - %s", a.Name))
+				if a.Role != "" {
+					role := a.Role
+					if len(role) > rightWidth-len(a.Name)-8 {
+						role = role[:rightWidth-len(a.Name)-11] + "..."
+					}
+					rightContent.WriteString(formHintStyle.Render(" ("+role+")"))
+				}
+				rightContent.WriteString("\n")
 			}
-			rightContent.WriteString(formHintStyle.Render("     "+prompt) + "\n")
-			if step.WaitForApproval {
-				rightContent.WriteString(statusWarnStyle.Render("     ⏸ requires approval") + "\n")
+			rightContent.WriteString("\n")
+		}
+
+		// Show tasks
+		if len(wf.Tasks) > 0 {
+			rightContent.WriteString(detailLabelStyle.Render("Tasks:") + "\n")
+			for i, t := range wf.Tasks {
+				rightContent.WriteString(fmt.Sprintf("  %d. %s", i+1, t.Subject))
+				if t.Assign != "" {
+					rightContent.WriteString(formHintStyle.Render(" -> "+t.Assign))
+				}
+				rightContent.WriteString("\n")
+				if len(t.BlockedBy) > 0 {
+					rightContent.WriteString(statusWarnStyle.Render(fmt.Sprintf("     blocked by: %v", t.BlockedBy)) + "\n")
+				}
 			}
 		}
 	}

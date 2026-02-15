@@ -88,7 +88,7 @@ type Model struct {
 	rollbackCursor  int
 	// Workflows tab
 	workflowList   []workflow.Workflow
-	workflowRun    *workflow.WorkflowRun
+	workflowRun    *workflow.WorkflowRunResult
 	workflowCursor int
 }
 

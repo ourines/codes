@@ -15,10 +15,14 @@ var builtinWorkflows = []Workflow{
 		Name:        "code-review",
 		Description: "Review all staged changes for issues and improvements",
 		BuiltIn:     true,
-		Steps: []Step{
+		Agents: []WorkflowAgent{
+			{Name: "reviewer", Role: "Code reviewer: analyze diffs, find bugs, security issues, and style problems"},
+		},
+		Tasks: []WorkflowTask{
 			{
-				Name:   "Review staged changes",
-				Prompt: "Run `git diff --cached` and review the staged changes. Look for bugs, security issues, code style problems, and suggest improvements. Be specific about file names and line numbers.",
+				Subject: "Review staged changes",
+				Assign:  "reviewer",
+				Prompt:  "Run `git diff --cached` and review the staged changes. Look for bugs, security issues, code style problems, and suggest improvements. Be specific about file names and line numbers.",
 			},
 		},
 	},
@@ -26,14 +30,21 @@ var builtinWorkflows = []Workflow{
 		Name:        "write-tests",
 		Description: "Generate tests for recently modified files",
 		BuiltIn:     true,
-		Steps: []Step{
+		Agents: []WorkflowAgent{
+			{Name: "analyzer", Role: "Identify modified files and assess test coverage gaps"},
+			{Name: "writer", Role: "Write comprehensive tests following project conventions"},
+		},
+		Tasks: []WorkflowTask{
 			{
-				Name:   "Identify modified files",
-				Prompt: "Run `git diff --name-only HEAD~1` to find recently modified source files. List them and identify which ones lack test coverage.",
+				Subject: "Identify modified files",
+				Assign:  "analyzer",
+				Prompt:  "Run `git diff --name-only HEAD~1` to find recently modified source files. List them and identify which ones lack test coverage.",
 			},
 			{
-				Name:   "Write tests",
-				Prompt: "Based on the modified files identified in the previous step, write comprehensive tests for any files lacking test coverage. Follow the existing test conventions in the project.",
+				Subject:   "Write tests",
+				Assign:    "writer",
+				Prompt:    "Based on the modified files identified by the analyzer, write comprehensive tests for any files lacking test coverage. Follow the existing test conventions in the project.",
+				BlockedBy: []int{1},
 			},
 		},
 	},
@@ -41,19 +52,27 @@ var builtinWorkflows = []Workflow{
 		Name:        "pre-pr-check",
 		Description: "Full pre-PR pipeline: review, test, docs",
 		BuiltIn:     true,
-		Steps: []Step{
+		Agents: []WorkflowAgent{
+			{Name: "reviewer", Role: "Review code changes for quality and correctness"},
+			{Name: "tester", Role: "Run and verify test suite"},
+			{Name: "docs", Role: "Update documentation as needed"},
+		},
+		Tasks: []WorkflowTask{
 			{
-				Name:   "Code review",
-				Prompt: "Run `git diff --cached` (or `git diff main...HEAD` if nothing staged) and review all changes. Report any bugs, security issues, or code quality concerns.",
+				Subject: "Code review",
+				Assign:  "reviewer",
+				Prompt:  "Run `git diff --cached` (or `git diff main...HEAD` if nothing staged) and review all changes. Report any bugs, security issues, or code quality concerns.",
 			},
 			{
-				Name:   "Verify tests",
-				Prompt: "Run the project's test suite. If tests fail, report the failures. If modified files lack tests, write them.",
+				Subject: "Verify tests",
+				Assign:  "tester",
+				Prompt:  "Run the project's test suite. If tests fail, report the failures. If modified files lack tests, write them.",
 			},
 			{
-				Name:            "Update documentation",
-				Prompt:          "Check if any changed code requires documentation updates (README, inline comments, API docs). Make necessary updates.",
-				WaitForApproval: true,
+				Subject:   "Update documentation",
+				Assign:    "docs",
+				Prompt:    "Check if any changed code requires documentation updates (README, inline comments, API docs). Make necessary updates.",
+				BlockedBy: []int{1, 2},
 			},
 		},
 	},
@@ -163,16 +182,68 @@ func DeleteWorkflow(name string) error {
 	return nil
 }
 
+// legacyStep represents the old workflow step format for migration.
+type legacyStep struct {
+	Name   string `yaml:"name"`
+	Prompt string `yaml:"prompt"`
+}
+
+// legacyWorkflow represents the old workflow format with steps.
+type legacyWorkflow struct {
+	Name        string       `yaml:"name"`
+	Description string       `yaml:"description,omitempty"`
+	Steps       []legacyStep `yaml:"steps,omitempty"`
+}
+
 func loadWorkflowFile(path string) (*Workflow, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, err
 	}
+
+	// Try loading as new format first
 	var wf Workflow
 	if err := yaml.Unmarshal(data, &wf); err != nil {
 		return nil, err
 	}
+
+	// Detect old format: has no agents/tasks but raw YAML contains "steps"
+	if len(wf.Agents) == 0 && len(wf.Tasks) == 0 {
+		var legacy legacyWorkflow
+		if err := yaml.Unmarshal(data, &legacy); err == nil && len(legacy.Steps) > 0 {
+			wf = migrateFromLegacy(legacy)
+			// Overwrite file with new format
+			_ = saveWorkflowFile(path, &wf)
+		}
+	}
+
 	return &wf, nil
+}
+
+// migrateFromLegacy converts old steps-based workflow to new agents+tasks format.
+func migrateFromLegacy(legacy legacyWorkflow) Workflow {
+	wf := Workflow{
+		Name:        legacy.Name,
+		Description: legacy.Description,
+		Agents: []WorkflowAgent{
+			{Name: "worker", Role: "Execute workflow tasks sequentially"},
+		},
+	}
+
+	var prevIdx int
+	for i, step := range legacy.Steps {
+		task := WorkflowTask{
+			Subject: step.Name,
+			Assign:  "worker",
+			Prompt:  step.Prompt,
+		}
+		if i > 0 {
+			task.BlockedBy = []int{prevIdx}
+		}
+		wf.Tasks = append(wf.Tasks, task)
+		prevIdx = i + 1 // 1-based
+	}
+	return wf
 }
 
 func saveWorkflowFile(path string, wf *Workflow) error {

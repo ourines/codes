@@ -27,7 +27,8 @@ var workflowRunCmd = &cobra.Command{
 	Run: func(cmd *cobra.Command, args []string) {
 		dir, _ := cmd.Flags().GetString("dir")
 		model, _ := cmd.Flags().GetString("model")
-		RunWorkflowRun(args[0], dir, model)
+		project, _ := cmd.Flags().GetString("project")
+		RunWorkflowRun(args[0], dir, model, project)
 	},
 }
 
@@ -52,6 +53,7 @@ var workflowDeleteCmd = &cobra.Command{
 func init() {
 	workflowRunCmd.Flags().StringP("dir", "d", "", "Working directory (default: current)")
 	workflowRunCmd.Flags().StringP("model", "m", "", "Claude model to use")
+	workflowRunCmd.Flags().StringP("project", "p", "", "Project name to execute in")
 
 	WorkflowCmd.AddCommand(workflowListCmd)
 	WorkflowCmd.AddCommand(workflowRunCmd)

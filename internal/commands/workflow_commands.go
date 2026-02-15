@@ -1,7 +1,6 @@
 package commands
 
 import (
-	"context"
 	"fmt"
 	"os"
 
@@ -32,13 +31,13 @@ func RunWorkflowList() {
 		if wf.Description != "" {
 			fmt.Printf("    %s\n", wf.Description)
 		}
-		fmt.Printf("    Steps: %d\n", len(wf.Steps))
+		fmt.Printf("    Agents: %d  Tasks: %d\n", len(wf.Agents), len(wf.Tasks))
 		fmt.Println()
 	}
 }
 
-// RunWorkflowRun executes a workflow by name.
-func RunWorkflowRun(name, dir, model string) {
+// RunWorkflowRun launches a workflow as an agent team (non-blocking).
+func RunWorkflowRun(name, dir, model, project string) {
 	wf, err := workflow.GetWorkflow(name)
 	if err != nil {
 		ui.ShowError("Workflow not found", err)
@@ -49,43 +48,27 @@ func RunWorkflowRun(name, dir, model string) {
 		dir, _ = os.Getwd()
 	}
 
-	fmt.Printf("Running workflow: %s (%d steps)\n", wf.Name, len(wf.Steps))
+	fmt.Printf("Launching workflow: %s (%d agents, %d tasks)\n", wf.Name, len(wf.Agents), len(wf.Tasks))
 	if wf.Description != "" {
 		fmt.Printf("  %s\n", wf.Description)
 	}
 	fmt.Println()
 
-	ctx := context.Background()
-	run, err := workflow.RunWorkflow(ctx, wf, workflow.RunWorkflowOptions{
+	result, err := workflow.RunWorkflow(wf, workflow.RunWorkflowOptions{
 		WorkDir: dir,
 		Model:   model,
+		Project: project,
 	})
 	if err != nil {
-		ui.ShowError("Workflow execution failed", err)
+		ui.ShowError("Workflow launch failed", err)
 		return
 	}
 
-	// Print results
-	for i, result := range run.Results {
-		status := "✓"
-		if result.Error != "" {
-			status = "✗"
-		}
-		fmt.Printf("  %s Step %d: %s\n", status, i+1, result.StepName)
-		if result.Error != "" {
-			fmt.Printf("    Error: %s\n", result.Error)
-		}
-		if result.Cost > 0 {
-			fmt.Printf("    Cost: $%.4f\n", result.Cost)
-		}
-		fmt.Println()
-	}
-
-	if run.Status == "completed" {
-		ui.ShowSuccess("Workflow completed successfully.")
-	} else {
-		ui.ShowError(fmt.Sprintf("Workflow %s", run.Status), nil)
-	}
+	ui.ShowSuccess("Workflow launched as team: %s", result.TeamName)
+	fmt.Printf("  Agents started: %d\n", result.Agents)
+	fmt.Printf("  Tasks created:  %d\n", result.Tasks)
+	fmt.Println()
+	fmt.Printf("Monitor progress: codes agent status %s\n", result.TeamName)
 }
 
 // RunWorkflowCreate creates a new workflow template file.
@@ -99,10 +82,14 @@ func RunWorkflowCreate(name string) {
 	wf := &workflow.Workflow{
 		Name:        name,
 		Description: "Custom workflow",
-		Steps: []workflow.Step{
+		Agents: []workflow.WorkflowAgent{
+			{Name: "worker", Role: "Execute workflow tasks"},
+		},
+		Tasks: []workflow.WorkflowTask{
 			{
-				Name:   "Step 1",
-				Prompt: "Describe what this step should do",
+				Subject: "Task 1",
+				Assign:  "worker",
+				Prompt:  "Describe what this task should do",
 			},
 		},
 	}
@@ -113,7 +100,7 @@ func RunWorkflowCreate(name string) {
 	}
 
 	fmt.Printf("Created workflow template: %s\n", workflow.WorkflowDir()+"/"+name+".yml")
-	fmt.Println("Edit the YAML file to customize steps.")
+	fmt.Println("Edit the YAML file to customize agents and tasks.")
 }
 
 // RunWorkflowDelete removes a workflow.

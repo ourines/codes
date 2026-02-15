@@ -3,6 +3,7 @@ package agent
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"time"
 )
 
@@ -169,4 +170,84 @@ func IsAgentAlive(teamName, agentName string) bool {
 		SaveAgentState(state)
 	}
 	return alive
+}
+
+// AgentStartResult holds the result of starting a single agent.
+type AgentStartResult struct {
+	Name    string `json:"name"`
+	Started bool   `json:"started"`
+	PID     int    `json:"pid,omitempty"`
+	Error   string `json:"error,omitempty"`
+}
+
+// StartAgent spawns an agent daemon as an independent subprocess.
+// Returns the PID of the spawned process.
+func StartAgent(teamName, agentName string) (int, error) {
+	// Verify the agent exists
+	if _, err := NewDaemon(teamName, agentName); err != nil {
+		return 0, err
+	}
+
+	// Check if already running
+	if IsAgentAlive(teamName, agentName) {
+		state, _ := GetAgentState(teamName, agentName)
+		pid := 0
+		if state != nil {
+			pid = state.PID
+		}
+		return 0, fmt.Errorf("agent %q is already running (pid %d)", agentName, pid)
+	}
+
+	exe, err := os.Executable()
+	if err != nil {
+		return 0, fmt.Errorf("cannot find executable: %w", err)
+	}
+
+	cmd := exec.Command(exe, "agent", "run", teamName, agentName)
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Start(); err != nil {
+		return 0, fmt.Errorf("failed to start agent: %w", err)
+	}
+
+	pid := cmd.Process.Pid
+	cmd.Process.Release() // detach
+	return pid, nil
+}
+
+// StartAllAgents spawns all agents in a team, skipping those already running.
+func StartAllAgents(teamName string) ([]AgentStartResult, error) {
+	cfg, err := GetTeam(teamName)
+	if err != nil {
+		return nil, err
+	}
+
+	var results []AgentStartResult
+	for _, m := range cfg.Members {
+		r := AgentStartResult{Name: m.Name}
+
+		if IsAgentAlive(teamName, m.Name) {
+			state, _ := GetAgentState(teamName, m.Name)
+			if state != nil {
+				r.PID = state.PID
+			}
+			r.Error = "already running"
+			results = append(results, r)
+			continue
+		}
+
+		pid, err := StartAgent(teamName, m.Name)
+		if err != nil {
+			// StartAgent checks alive again; handle "already running" gracefully
+			r.Error = err.Error()
+			results = append(results, r)
+			continue
+		}
+
+		r.Started = true
+		r.PID = pid
+		results = append(results, r)
+	}
+
+	return results, nil
 }

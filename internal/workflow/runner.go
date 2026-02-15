@@ -1,7 +1,6 @@
 package workflow
 
 import (
-	"context"
 	"fmt"
 	"time"
 
@@ -10,161 +9,116 @@ import (
 
 // RunWorkflowOptions configures workflow execution.
 type RunWorkflowOptions struct {
-	WorkDir        string
-	Model          string
-	ApprovalPrompt ApprovalPrompt // If nil, uses auto-approval
-	MaxRetries     int            // Max retries per step (default: 3)
+	WorkDir string
+	Model   string
+	Project string
 }
 
-// RunWorkflow executes a workflow sequentially, step by step.
-func RunWorkflow(ctx context.Context, wf *Workflow, opts RunWorkflowOptions) (*WorkflowRun, error) {
-	// Set defaults
-	if opts.ApprovalPrompt == nil {
-		opts.ApprovalPrompt = NewAutoApprovalPrompt()
+// RunWorkflow launches a workflow as an agent team (non-blocking).
+// It creates a team, adds agents, creates tasks, and starts all agents.
+func RunWorkflow(wf *Workflow, opts RunWorkflowOptions) (*WorkflowRunResult, error) {
+	if len(wf.Agents) == 0 {
+		return nil, fmt.Errorf("workflow %q has no agents defined", wf.Name)
 	}
-	if opts.MaxRetries == 0 {
-		opts.MaxRetries = 3
-	}
-
-	run := &WorkflowRun{
-		Workflow:    wf,
-		CurrentStep: 0,
-		Status:      "running",
-		WorkDir:     opts.WorkDir,
-		Model:       opts.Model,
-		StartedAt:   time.Now().Format(time.RFC3339),
+	if len(wf.Tasks) == 0 {
+		return nil, fmt.Errorf("workflow %q has no tasks defined", wf.Name)
 	}
 
-	// Save initial state
-	if err := SaveRun(run); err != nil {
-		// Non-fatal: log but continue
-		fmt.Printf("Warning: failed to save workflow run: %v\n", err)
+	// Validate task.Assign references existing agents
+	agentNames := make(map[string]bool)
+	for _, a := range wf.Agents {
+		agentNames[a.Name] = true
 	}
-
-	for i := 0; i < len(wf.Steps); {
-		step := wf.Steps[i]
-		run.CurrentStep = i
-
-		stepResult, shouldContinue := executeStepWithRetry(ctx, run, step, i, opts)
-
-		run.Results = append(run.Results, stepResult)
-
-		// Save progress after each step
-		if err := SaveRun(run); err != nil {
-			fmt.Printf("Warning: failed to save workflow run: %v\n", err)
+	for i, t := range wf.Tasks {
+		if t.Assign != "" && !agentNames[t.Assign] {
+			return nil, fmt.Errorf("task %d (%q) assigns to unknown agent %q", i+1, t.Subject, t.Assign)
 		}
-
-		if !shouldContinue {
-			run.CompletedAt = time.Now().Format(time.RFC3339)
-			if err := SaveRun(run); err != nil {
-				fmt.Printf("Warning: failed to save final workflow run: %v\n", err)
+		// Validate blockedBy references are in range
+		for _, dep := range t.BlockedBy {
+			if dep < 1 || dep > len(wf.Tasks) {
+				return nil, fmt.Errorf("task %d (%q) has invalid blockedBy index %d (must be 1-%d)", i+1, t.Subject, dep, len(wf.Tasks))
 			}
-			return run, nil
+			if dep == i+1 {
+				return nil, fmt.Errorf("task %d (%q) cannot block itself", i+1, t.Subject)
+			}
 		}
-
-		i++ // Move to next step
 	}
 
-	run.Status = "completed"
-	run.CompletedAt = time.Now().Format(time.RFC3339)
-	if err := SaveRun(run); err != nil {
-		fmt.Printf("Warning: failed to save final workflow run: %v\n", err)
-	}
-	return run, nil
-}
+	// Generate unique team name
+	teamName := fmt.Sprintf("wf-%s-%d", wf.Name, time.Now().Unix())
 
-// executeStepWithRetry executes a single step with retry logic and approval.
-// Returns (stepResult, shouldContinue).
-func executeStepWithRetry(
-	ctx context.Context,
-	run *WorkflowRun,
-	step Step,
-	stepIndex int,
-	opts RunWorkflowOptions,
-) (StepResult, bool) {
-	stepResult := StepResult{
-		StepName: step.Name,
-	}
-
-	for attempt := 0; attempt <= opts.MaxRetries; attempt++ {
-		// Build prompt with context from previous steps
-		prompt := step.Prompt
-		if stepIndex > 0 && len(run.Results) > 0 {
-			prev := run.Results[len(run.Results)-1]
-			prompt = fmt.Sprintf("Previous step (%s) result:\n%s\n\nNow: %s",
-				prev.StepName, prev.Result, step.Prompt)
-		}
-
-		result, err := agent.RunClaude(ctx, agent.RunOptions{
-			Prompt:   prompt,
-			WorkDir:  opts.WorkDir,
-			Model:    opts.Model,
-			PermMode: "dangerously-skip-permissions",
-		})
-
-		// Handle execution error
+	// Create team
+	_, err := agent.CreateTeam(teamName, fmt.Sprintf("Workflow: %s", wf.Description), opts.WorkDir)
+	if err != nil {
+		// Handle second-level collision
+		teamName = fmt.Sprintf("wf-%s-%d", wf.Name, time.Now().UnixMilli())
+		_, err = agent.CreateTeam(teamName, fmt.Sprintf("Workflow: %s", wf.Description), opts.WorkDir)
 		if err != nil {
-			stepResult.Error = err.Error()
-			stepResult.Retries = attempt
-		} else if result.IsError {
-			stepResult.Error = result.Error
-			stepResult.Result = result.Result
-			stepResult.Retries = attempt
-		} else {
-			// Success
-			stepResult.Result = result.Result
-			stepResult.Cost = result.CostUSD
-			stepResult.Retries = attempt
-		}
-
-		// If no approval needed, return immediately
-		if !step.WaitForApproval {
-			if stepResult.Error != "" {
-				run.Status = "failed"
-				return stepResult, false // Stop on error without approval
-			}
-			stepResult.ApprovalStatus = "auto-approved"
-			return stepResult, true
-		}
-
-		// Prompt for approval
-		decision, err := opts.ApprovalPrompt.PromptApproval(step.Name, &stepResult)
-		if err != nil {
-			// I/O error during approval prompt
-			stepResult.Error = fmt.Sprintf("approval prompt error: %v", err)
-			run.Status = "failed"
-			return stepResult, false
-		}
-
-		switch decision {
-		case ApprovalApprove:
-			stepResult.ApprovalStatus = "approved"
-			return stepResult, true
-
-		case ApprovalSkip:
-			stepResult.ApprovalStatus = "skipped"
-			stepResult.Result = "(skipped by user)"
-			return stepResult, true
-
-		case ApprovalAbort:
-			stepResult.ApprovalStatus = "aborted"
-			run.Status = "aborted"
-			return stepResult, false
-
-		case ApprovalReject:
-			stepResult.ApprovalStatus = "rejected"
-			if attempt < opts.MaxRetries {
-				fmt.Printf("\n🔄 Retrying step (attempt %d/%d)...\n\n", attempt+2, opts.MaxRetries+1)
-				continue // Retry
-			} else {
-				fmt.Printf("\n❌ Max retries (%d) reached. Marking step as failed.\n", opts.MaxRetries)
-				run.Status = "failed"
-				return stepResult, false
-			}
+			return nil, fmt.Errorf("create team: %w", err)
 		}
 	}
 
-	// Should not reach here
-	run.Status = "failed"
-	return stepResult, false
+	// Add agents
+	for _, a := range wf.Agents {
+		model := a.Model
+		if opts.Model != "" {
+			model = opts.Model
+		}
+		member := agent.TeamMember{
+			Name:  a.Name,
+			Role:  a.Role,
+			Model: model,
+			Type:  "worker",
+		}
+		if err := agent.AddMember(teamName, member); err != nil {
+			agent.DeleteTeam(teamName)
+			return nil, fmt.Errorf("add agent %q: %w", a.Name, err)
+		}
+	}
+
+	// Create tasks, tracking the mapping from 1-based index to actual task ID
+	taskIDMap := make(map[int]int) // 1-based workflow index → actual task ID
+	for i, t := range wf.Tasks {
+		// Map blockedBy from 1-based workflow index to actual task IDs
+		var blockedBy []int
+		for _, dep := range t.BlockedBy {
+			if actualID, ok := taskIDMap[dep]; ok {
+				blockedBy = append(blockedBy, actualID)
+			}
+		}
+
+		priority := agent.PriorityNormal
+		if t.Priority != "" {
+			priority = agent.TaskPriority(t.Priority)
+		}
+
+		task, err := agent.CreateTask(
+			teamName,
+			t.Subject,
+			t.Prompt,
+			t.Assign,
+			blockedBy,
+			priority,
+			opts.Project,
+			opts.WorkDir,
+		)
+		if err != nil {
+			agent.DeleteTeam(teamName)
+			return nil, fmt.Errorf("create task %q: %w", t.Subject, err)
+		}
+		taskIDMap[i+1] = task.ID
+	}
+
+	// Start all agents
+	_, err = agent.StartAllAgents(teamName)
+	if err != nil {
+		agent.DeleteTeam(teamName)
+		return nil, fmt.Errorf("start agents: %w", err)
+	}
+
+	return &WorkflowRunResult{
+		TeamName: teamName,
+		Agents:   len(wf.Agents),
+		Tasks:    len(wf.Tasks),
+	}, nil
 }

@@ -3,8 +3,6 @@ package mcpserver
 import (
 	"context"
 	"fmt"
-	"os"
-	"os/exec"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -201,37 +199,10 @@ type agentStartOutput struct {
 }
 
 func agentStartHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input agentStartInput) (*mcpsdk.CallToolResult, agentStartOutput, error) {
-	// Verify the agent exists before spawning
-	_, err := agent.NewDaemon(input.Team, input.Name)
+	pid, err := agent.StartAgent(input.Team, input.Name)
 	if err != nil {
 		return nil, agentStartOutput{}, err
 	}
-
-	// Check if the agent is already alive
-	if agent.IsAgentAlive(input.Team, input.Name) {
-		state, _ := agent.GetAgentState(input.Team, input.Name)
-		pid := 0
-		if state != nil {
-			pid = state.PID
-		}
-		return nil, agentStartOutput{}, fmt.Errorf("agent %q is already running (pid %d)", input.Name, pid)
-	}
-
-	// Spawn as independent subprocess so it survives MCP server restarts
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, agentStartOutput{}, fmt.Errorf("cannot find executable: %w", err)
-	}
-
-	cmd := exec.Command(exe, "agent", "run", input.Team, input.Name)
-	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	if err := cmd.Start(); err != nil {
-		return nil, agentStartOutput{}, fmt.Errorf("failed to start agent: %w", err)
-	}
-
-	pid := cmd.Process.Pid
-	cmd.Process.Release() // detach
 
 	// Ensure background notification monitor is running
 	ensureMonitorRunning(mcpServer)
@@ -585,44 +556,19 @@ type teamStartAllOutput struct {
 }
 
 func teamStartAllHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input teamStartAllInput) (*mcpsdk.CallToolResult, teamStartAllOutput, error) {
-	cfg, err := agent.GetTeam(input.Name)
+	agentResults, err := agent.StartAllAgents(input.Name)
 	if err != nil {
 		return nil, teamStartAllOutput{}, err
 	}
 
-	exe, err := os.Executable()
-	if err != nil {
-		return nil, teamStartAllOutput{}, fmt.Errorf("cannot find executable: %w", err)
-	}
-
 	var results []teamStartAllResult
-	for _, m := range cfg.Members {
-		r := teamStartAllResult{Name: m.Name}
-
-		// Skip already alive agents
-		if agent.IsAgentAlive(input.Name, m.Name) {
-			state, _ := agent.GetAgentState(input.Name, m.Name)
-			if state != nil {
-				r.PID = state.PID
-			}
-			r.Error = "already running"
-			results = append(results, r)
-			continue
-		}
-
-		cmd := exec.Command(exe, "agent", "run", input.Name, m.Name)
-		cmd.Stdout = os.Stdout
-		cmd.Stderr = os.Stderr
-		if err := cmd.Start(); err != nil {
-			r.Error = err.Error()
-			results = append(results, r)
-			continue
-		}
-
-		r.Started = true
-		r.PID = cmd.Process.Pid
-		cmd.Process.Release()
-		results = append(results, r)
+	for _, ar := range agentResults {
+		results = append(results, teamStartAllResult{
+			Name:    ar.Name,
+			Started: ar.Started,
+			PID:     ar.PID,
+			Error:   ar.Error,
+		})
 	}
 
 	// Ensure background notification monitor is running
