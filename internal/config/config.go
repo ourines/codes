@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 )
@@ -158,7 +159,12 @@ var ConfigPath string
 
 // checkConfigPermissions verifies that the config file has secure permissions.
 // Returns an error if the file is readable by group or others (world-readable).
+// On Windows, file permission bits are not meaningful, so this is a no-op.
 func checkConfigPermissions(path string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+
 	info, err := os.Stat(path)
 	if err != nil {
 		return nil // File doesn't exist yet, that's okay

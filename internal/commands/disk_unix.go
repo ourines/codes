@@ -1,4 +1,4 @@
-//go:build !windows
+//go:build linux || darwin || freebsd
 
 package commands
 
@@ -15,8 +15,8 @@ func getDiskUsage(path string) (*diskUsage, error) {
 	if err := syscall.Statfs(path, &stat); err != nil {
 		return nil, err
 	}
-	available := stat.Bavail * uint64(stat.Bsize)
-	total := stat.Blocks * uint64(stat.Bsize)
+	available := uint64(stat.Bavail) * uint64(stat.Bsize)
+	total := uint64(stat.Blocks) * uint64(stat.Bsize)
 	used := total - available
 	return &diskUsage{
 		Available:   available,
