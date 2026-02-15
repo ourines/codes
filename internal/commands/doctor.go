@@ -6,7 +6,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"syscall"
 
 	"codes/internal/agent"
 	"codes/internal/config"
@@ -201,22 +200,16 @@ func RunDoctor() {
 		}
 
 		// Get available disk space
-		var stat syscall.Statfs_t
-		err = syscall.Statfs(homeDir, &stat)
+		du, err := getDiskUsage(homeDir)
 		if err == nil {
-			available := stat.Bavail * uint64(stat.Bsize)
-			total := stat.Blocks * uint64(stat.Bsize)
-			used := total - available
-			usedPercent := float64(used) / float64(total) * 100
-
 			ui.ShowInfo("Disk usage: %.1f%% (%s / %s available)",
-				usedPercent, formatBytes(available), formatBytes(total))
+				du.UsedPercent, formatBytes(du.Available), formatBytes(du.Total))
 
-			if usedPercent > 90 {
-				ui.ShowWarning("Disk usage high (%.1f%%)", usedPercent)
+			if du.UsedPercent > 90 {
+				ui.ShowWarning("Disk usage high (%.1f%%)", du.UsedPercent)
 				warnCount++
-			} else if available < 1*1024*1024*1024 { // < 1GB
-				ui.ShowWarning("Low disk space: %s available", formatBytes(available))
+			} else if du.Available < 1*1024*1024*1024 { // < 1GB
+				ui.ShowWarning("Low disk space: %s available", formatBytes(du.Available))
 				warnCount++
 			} else {
 				ui.ShowSuccess("Sufficient disk space available")
