@@ -34,15 +34,16 @@ The root command dynamically selects behavior:
 | Package | Role |
 |---------|------|
 | `internal/config` | JSON config load/save, API testing, git info extraction, project/remote CRUD |
-| `internal/tui` | Multi-tab bubbletea TUI (Projects, Profiles, Remotes, Settings) |
+| `internal/tui` | Multi-tab bubbletea TUI (Projects, Profiles, Remotes, Settings, Stats, Tasks, Workflows) |
 | `internal/session` | Terminal session lifecycle: spawn, track via PID files, kill |
 | `internal/remote` | SSH/SCP operations, remote codes installation, profile sync |
 | `internal/agent` | Agent team management: daemon lifecycle, task execution, message passing, Claude subprocess orchestration |
 | `internal/stats` | Cost tracking: JSONL session parsing, token aggregation, caching, time-range filtering |
-| `internal/mcp` | MCP server exposing 31 tools over stdio transport (10 config + 17 agent + 4 stats tools) |
+| `internal/mcp` | MCP server exposing 39 tools over stdio transport (10 config + 21 agent + 4 stats + 4 workflow tools) |
 | `internal/commands` | Cobra command definitions (`cobra.go`) + implementations (`commands.go`) |
 | `internal/output` | JSON mode wrapper (`output.JSONMode` flag) |
 | `internal/ui` | Styled CLI text output helpers |
+| `internal/workflow` | Workflow templates: YAML store, agent team orchestration, legacy migration |
 
 ### Command Hierarchy
 
@@ -54,7 +55,7 @@ codes
 ├── start (alias: s)         # Launch Claude in directory or project alias
 ├── profile (alias: pf)      # add / select / test / list / remove
 ├── project (alias: p)       # add [name] [path] / list / remove
-├── config (alias: c)        # set/get/reset/list (keys: default-behavior, skip-permissions, terminal)
+├── config (alias: c)        # set/get/reset/list/export/import (keys: default-behavior, skip-permissions, terminal)
 ├── remote (alias: r)        # add/remove/list/status/install/sync/setup/ssh
 ├── agent (alias: a)         # Team and task management
 │   ├── team                 # create/delete/list/info
@@ -69,9 +70,14 @@ codes
 │   └── status <team>        # Team dashboard
 ├── stats (alias: st)        # View Claude API usage statistics
 │   ├── summary [period]     # Cost summary (today/week/month/all)
-│   ├─�� project [name]       # Cost breakdown by project
+│   ├── project [name]       # Cost breakdown by project
 │   ├── model                # Cost breakdown by model
 │   └── refresh              # Force cache refresh
+├── workflow (alias: wf)     # Workflow templates (agent team orchestration)
+│   ├── list                 # List all workflows
+│   ├── run <name>           # Launch workflow as agent team
+│   ├── create <name>        # Create template scaffold
+│   └── delete <name>        # Delete workflow
 ├── serve                    # MCP server mode
 └── completion [shell]       # Hidden, still functional
 ```
@@ -109,13 +115,15 @@ PID tracking via `/tmp/codes-session-<id>.pid`. `RefreshStatus()` polls process 
 
 ### MCP Server (`internal/mcp`)
 
-31 tools registered via `mcpsdk.AddTool()` over stdio transport:
+39 tools registered via `mcpsdk.AddTool()` over stdio transport:
 
 **Config tools (10):** `list_projects`, `add_project`, `remove_project`, `list_profiles`, `switch_profile`, `get_project_info`, `list_remotes`, `add_remote`, `remove_remote`, `sync_remote`
 
 **Stats tools (4):** `stats_summary`, `stats_by_project`, `stats_by_model`, `stats_refresh`
 
-**Agent tools (17):** `team_create`, `team_delete`, `team_list`, `team_get`, `team_status`, `team_start_all`, `team_stop_all`, `agent_add`, `agent_remove`, `agent_list`, `agent_start`, `agent_stop`, `task_create`, `task_update`, `task_list`, `task_get`, `message_send`, `message_list`, `message_mark_read`
+**Agent tools (21):** `team_create`, `team_delete`, `team_list`, `team_get`, `team_status`, `team_start_all`, `team_stop_all`, `agent_add`, `agent_remove`, `agent_list`, `agent_start`, `agent_stop`, `task_create`, `task_update`, `task_list`, `task_get`, `message_send`, `message_list`, `message_mark_read`, `test_sampling`, `team_watch`
+
+**Workflow tools (4):** `workflow_list`, `workflow_get`, `workflow_run`, `workflow_create`
 
 ### Agent Team System (`internal/agent`)
 
@@ -149,6 +157,10 @@ Each agent runs as an independent process (`codes agent run <team> <agent>`), po
 
 State tracked in `AgentState` with PID, status (`idle`/`running`/`stopping`/`stopped`), and persistent session ID.
 
+**Agent Start (`team.go`):**
+
+`StartAgent(teamName, agentName)` and `StartAllAgents(teamName)` handle subprocess spawning. These are called by MCP handlers and the workflow runner. Agents are spawned via `os/exec` and detached from the parent process.
+
 **Task Execution (`runner.go`):**
 
 Tasks invoke Claude CLI as subprocess with JSON output:
@@ -158,7 +170,7 @@ Tasks invoke Claude CLI as subprocess with JSON output:
 
 **File-based Storage Pattern:**
 
-All state persists in `~/.codes/agent/<team>/`:
+All state persists in `~/.codes/teams/<team>/`:
 - `config.json` — Team configuration (members, workdir)
 - `tasks/<id>.json` — Individual task files with atomic writes
 - `messages/<id>.json` — Individual message files
@@ -178,6 +190,45 @@ Atomic writes via temp file + rename. File locks prevent race conditions during 
 - **Agent file locking**: Future enhancement for coordinated task claims across distributed agents (current impl relies on filesystem atomic renames).
 - **Stats caching**: Session data cached in `~/.codes/stats.json` with auto-refresh every 5 minutes. Full rescan via `codes stats refresh` or `stats_refresh` MCP tool.
 - **Cost calculation**: Token prices hardcoded in `internal/stats/pricing.go`. Uses Claude API 2024 pricing: input/output/cache-create/cache-read tokens.
+- **Workflow team naming**: `wf-{name}-{unix_timestamp}` format. Falls back to milliseconds on collision.
+- **Workflow blockedBy mapping**: YAML uses 1-based task indices; runner maps these to actual task IDs via `taskIDMap` during creation.
+- **Workflow legacy migration**: `loadWorkflowFile()` detects old `steps` key in YAML and auto-converts to single `worker` agent with sequential `blockedBy` tasks.
+
+### Workflow System (`internal/workflow/`)
+
+Workflows are reusable YAML templates that orchestrate agent teams. Running a workflow creates a team, adds agents, creates tasks with dependencies, and starts all agents — non-blocking.
+
+**Types (`types.go`):**
+
+- `Workflow` — name, description, agents (`[]WorkflowAgent`), tasks (`[]WorkflowTask`), builtIn flag
+- `WorkflowAgent` — name, role, model
+- `WorkflowTask` — subject, assign (agent name), prompt, priority, blockedBy (1-based task indices)
+- `WorkflowRunResult` — teamName, agentsStarted, tasksCreated
+
+**Store (`store.go`):**
+
+- YAML files in `~/.codes/workflows/`
+- Built-in workflows: `code-review`, `write-tests`, `pre-pr-check`
+- Legacy migration: detects old `steps`-based format and auto-converts to `agents` + `tasks`
+
+**Runner (`runner.go`):**
+
+Non-blocking orchestration flow:
+1. Validate agent names and blockedBy references
+2. `agent.CreateTeam()` with name `wf-{name}-{timestamp}`
+3. `agent.AddMember()` for each workflow agent
+4. `agent.CreateTask()` for each task (maps 1-based blockedBy to actual task IDs)
+5. `agent.StartAllAgents()` to launch daemons
+6. Return `WorkflowRunResult` immediately
+
+On failure at any step, cleans up the partially created team.
+
+**MCP Tools:**
+
+- `workflow_list` — List all workflows (built-in + custom)
+- `workflow_get` — Get workflow details
+- `workflow_run` — Launch workflow as agent team (returns team name for monitoring)
+- `workflow_create` — Create new workflow with validation (agent references, blockedBy bounds)
 
 ### Stats System (`internal/stats/`)
 
