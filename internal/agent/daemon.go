@@ -2,6 +2,7 @@ package agent
 
 import (
 	"codes/internal/config"
+	"codes/internal/notify"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -461,6 +462,16 @@ func (d *Daemon) writeNotification(task *Task, status, detail string) {
 	filename := filepath.Join(dir, fmt.Sprintf("%s__%d.json", d.TeamName, task.ID))
 	if err := os.WriteFile(filename, data, 0644); err != nil {
 		d.logger.Printf("notification: write error: %v", err)
+	}
+
+	// Send desktop notification
+	notifier := notify.NewDesktopNotifier()
+	if err := notifier.Send(notify.Notification{
+		Title:   fmt.Sprintf("codes: Task %s", status),
+		Message: fmt.Sprintf("[%s] #%d %s", d.TeamName, task.ID, task.Subject),
+		Sound:   status == "completed",
+	}); err != nil {
+		d.logger.Printf("notification: desktop notify error: %v", err)
 	}
 }
 
