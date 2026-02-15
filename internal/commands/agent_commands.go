@@ -6,9 +6,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"os/signal"
 	"strconv"
-	"syscall"
 	"time"
 
 	"codes/internal/agent"
@@ -207,7 +205,7 @@ func RunAgentDaemon(teamName, agentName string) {
 
 	// Handle signals
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	notifySignals(sigCh)
 	go func() {
 		<-sigCh
 		cancel()
@@ -448,7 +446,7 @@ func RunAgentStatus(teamName string) {
 // RunAgentStatusWatch runs RunAgentStatus in a loop, refreshing every 3 seconds.
 func RunAgentStatusWatch(teamName string) {
 	sigCh := make(chan os.Signal, 1)
-	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
+	notifySignals(sigCh)
 
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()

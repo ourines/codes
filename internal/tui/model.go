@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 
+	"codes/internal/agent"
 	"codes/internal/config"
 	"codes/internal/remote"
 	"codes/internal/session"
@@ -28,6 +29,7 @@ const (
 	viewRemotes
 	viewSettings
 	viewStats
+	viewTaskQueue
 	viewAddForm
 	viewAddProfile
 	viewAddRemote
@@ -67,6 +69,11 @@ type Model struct {
 	statsRecords []stats.SessionRecord
 	statsRange   string // "week" | "month" | "all"
 	statsLoading bool
+	// Task Queue
+	taskQueueTeams   []string
+	taskQueueTasks   []agent.Task
+	taskQueueCursor  int
+	taskQueueLoading bool
 }
 
 // projectDeletedMsg is sent after deleting a project.
@@ -275,6 +282,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == viewStats {
 			return m.updateStats(msg)
 		}
+		if m.state == viewTaskQueue {
+			return m.updateTaskQueue(msg)
+		}
 
 		// Right panel focused — handle session selection
 		if m.focus == focusRight && m.state == viewProjects {
@@ -311,6 +321,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statsLoading = true
 					m.statsRange = "week"
 					return m, loadStatsCmd("week")
+				}
+			case viewStats:
+				m.state = viewTaskQueue
+				if !m.taskQueueLoading && len(m.taskQueueTasks) == 0 {
+					m.taskQueueLoading = true
+					return m, loadTaskQueueCmd()
 				}
 			default:
 				m.state = viewProjects
@@ -732,6 +748,17 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 
+	case taskQueueLoadedMsg:
+		m.taskQueueLoading = false
+		if msg.err != nil {
+			m.err = fmt.Sprintf("task queue: %v", msg.err)
+		} else {
+			m.taskQueueTeams = msg.teams
+			m.taskQueueTasks = msg.tasks
+			m.taskQueueCursor = 0
+		}
+		return m, nil
+
 	case profileAddedMsg:
 		// Save the new profile
 		cfg, err := config.LoadConfig()
@@ -1061,6 +1088,10 @@ func (m Model) View() string {
 		// Stats uses full width, no left/right split
 		contentHeight := m.height - 7
 		b.WriteString(renderStatsView(m.statsDaily, m.statsRecords, m.statsRange, m.statsLoading, innerWidth, contentHeight))
+	} else if m.state == viewTaskQueue {
+		// Task Queue uses full width
+		contentHeight := m.height - 7
+		b.WriteString(renderTaskQueueView(m.taskQueueTeams, m.taskQueueTasks, m.taskQueueLoading, m.taskQueueCursor, innerWidth, contentHeight))
 	} else {
 		// Main content: left list + right detail
 		leftWidth := innerWidth / 2
@@ -1121,6 +1152,7 @@ func (m Model) renderHeader() string {
 	remotesTab := inactiveTabStyle.Render("Remotes")
 	settingsTab := inactiveTabStyle.Render("Settings")
 	statsTab := inactiveTabStyle.Render("Stats")
+	tasksTab := inactiveTabStyle.Render("Tasks")
 
 	if m.state == viewProjects || m.state == viewAddForm {
 		projectTab = activeTabStyle.Render("Projects")
@@ -1132,6 +1164,8 @@ func (m Model) renderHeader() string {
 		settingsTab = activeTabStyle.Render("Settings")
 	} else if m.state == viewStats {
 		statsTab = activeTabStyle.Render("Stats")
+	} else if m.state == viewTaskQueue {
+		tasksTab = activeTabStyle.Render("Tasks")
 	}
 
 	defaultCfg := ""
@@ -1168,7 +1202,7 @@ func (m Model) renderHeader() string {
 		}
 	}
 
-	tabs := fmt.Sprintf("%s  %s  %s  %s  %s", projectTab, profileTab, remotesTab, settingsTab, statsTab)
+	tabs := fmt.Sprintf("%s  %s  %s  %s  %s  %s", projectTab, profileTab, remotesTab, settingsTab, statsTab, tasksTab)
 	gap := strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(title)-lipgloss.Width(tabs)-lipgloss.Width(defaultCfg)-lipgloss.Width(sessionInfo)-lipgloss.Width(versionInfo)-9))
 
 	return fmt.Sprintf("%s  %s%s%s%s %s", title, tabs, gap, sessionInfo, defaultCfg, versionInfo)
@@ -1189,6 +1223,9 @@ func (m Model) renderHelp() string {
 	}
 	if m.state == viewStats {
 		return formHintStyle.Render("w week  m month  a all time  r refresh  tab switch  q quit")
+	}
+	if m.state == viewTaskQueue {
+		return formHintStyle.Render("↑↓ select  r refresh  tab switch  q quit")
 	}
 	if m.focus == focusRight && m.state == viewProjects {
 		return formHintStyle.Render("↑↓/jk select  Enter open  x kill  ← back  q quit")
