@@ -2,6 +2,9 @@
 # Usage: irm https://raw.githubusercontent.com/ourines/codes/main/install.ps1 | iex
 $ErrorActionPreference = "Stop"
 
+# Force TLS 1.2+ (Windows PowerShell 5.1 defaults to TLS 1.0 which GitHub rejects)
+[Net.ServicePointManager]::SecurityProtocol = [Net.SecurityProtocolType]::Tls12
+
 $Repo = "ourines/codes"
 $Binary = "codes.exe"
 
@@ -22,7 +25,7 @@ try {
     $Release = Invoke-RestMethod "https://api.github.com/repos/$Repo/releases/latest" -UseBasicParsing
     $Version = $Release.tag_name
 } catch {
-    Write-Error "Failed to determine latest version."
+    Write-Error "Failed to determine latest version: $($_.Exception.Message)"
     return
 }
 Write-Host "  > Latest version: $Version" -ForegroundColor Cyan
@@ -38,7 +41,8 @@ try {
     Invoke-WebRequest -Uri $Url -OutFile $TempZip -UseBasicParsing
 } catch {
     Remove-Item -Recurse -Force $TempDir -ErrorAction SilentlyContinue
-    Write-Error "Download failed. Check that a release exists for windows/$Arch."
+    Write-Host "  ! Download URL: $Url" -ForegroundColor Yellow
+    Write-Error "Download failed: $($_.Exception.Message)"
     return
 }
 Write-Host "  ✓ Downloaded successfully" -ForegroundColor Green

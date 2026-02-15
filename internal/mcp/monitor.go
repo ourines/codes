@@ -35,6 +35,11 @@ var (
 
 	pendingMu            sync.Mutex
 	pendingNotifications []taskNotification
+
+	// notifDirOverride allows tests to redirect notification scanning
+	// to an isolated temp directory. Empty string means use the default
+	// ~/.codes/notifications path.
+	notifDirOverride string
 )
 
 // ensureMonitorRunning starts the singleton notification monitor goroutine
@@ -66,11 +71,22 @@ func drainPendingNotifications() []taskNotification {
 	return out
 }
 
-func runNotificationMonitor(server *mcpsdk.Server) {
+// notificationDir returns the directory to scan for notification files.
+func notificationDir() string {
+	if notifDirOverride != "" {
+		return notifDirOverride
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
-		log.Printf("monitor: cannot get home dir: %v", err)
-		// Allow retry on next ensureMonitorRunning call.
+		return ""
+	}
+	return filepath.Join(home, ".codes", "notifications")
+}
+
+func runNotificationMonitor(server *mcpsdk.Server) {
+	dir := notificationDir()
+	if dir == "" {
+		log.Printf("monitor: cannot determine notification directory")
 		monitorMu.Lock()
 		monitorStarted = false
 		monitorMu.Unlock()
@@ -78,9 +94,14 @@ func runNotificationMonitor(server *mcpsdk.Server) {
 		return
 	}
 
-	dir := filepath.Join(home, ".codes", "notifications")
 	ticker := time.NewTicker(3 * time.Second)
 	defer ticker.Stop()
+
+	// Track files already processed by this monitor so we don't
+	// queue duplicate notifications. We leave files on disk for
+	// team_watch (shell-based consumer) to read and delete.
+	seenFiles := make(map[string]time.Time) // filename -> first-seen time
+	cleanupTick := 0
 
 	for range ticker.C {
 		entries, err := os.ReadDir(dir)
@@ -88,8 +109,17 @@ func runNotificationMonitor(server *mcpsdk.Server) {
 			continue // directory may not exist yet
 		}
 
+		// Track which files still exist for seen-map cleanup.
+		existingFiles := make(map[string]struct{}, len(entries))
+
 		for _, e := range entries {
 			if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+				continue
+			}
+			existingFiles[e.Name()] = struct{}{}
+
+			// Skip files we've already processed.
+			if _, seen := seenFiles[e.Name()]; seen {
 				continue
 			}
 
@@ -117,8 +147,29 @@ func runNotificationMonitor(server *mcpsdk.Server) {
 			// Best-effort: also try MCP logging push.
 			tryLogToSessions(server, &n)
 
-			// Remove the file — it is now queued (and possibly pushed).
-			os.Remove(path)
+			// Mark as seen (don't delete — let team_watch consume it).
+			seenFiles[e.Name()] = time.Now()
+		}
+
+		// Periodic cleanup: every ~30 ticks (~90s), remove stale files
+		// that team_watch didn't delete (e.g. watcher not running).
+		// Also prune the seen-map of entries for files that no longer exist.
+		cleanupTick++
+		if cleanupTick >= 30 {
+			cleanupTick = 0
+			staleThreshold := time.Now().Add(-2 * time.Minute)
+			for name, firstSeen := range seenFiles {
+				if _, exists := existingFiles[name]; !exists {
+					// File was deleted by team_watch — remove from seen map.
+					delete(seenFiles, name)
+					continue
+				}
+				if firstSeen.Before(staleThreshold) {
+					// File is stale and team_watch didn't pick it up — clean up.
+					os.Remove(filepath.Join(dir, name))
+					delete(seenFiles, name)
+				}
+			}
 		}
 	}
 }

@@ -8,7 +8,9 @@ import (
 	"os/exec"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
+	"unsafe"
 
 	"codes/internal/config"
 )
@@ -69,6 +71,20 @@ func buildWindowsScript(name, dir string, args []string, env map[string]string) 
 	return b.String(), scriptPath
 }
 
+// escapeBatchValue escapes special characters in batch script values.
+// Batch special characters: % " ^ & | ! < >
+func escapeBatchValue(s string) string {
+	s = strings.ReplaceAll(s, "%", "%%")   // Double percent signs
+	s = strings.ReplaceAll(s, "\"", "\\\"") // Escape quotes
+	s = strings.ReplaceAll(s, "^", "^^")   // Escape caret
+	s = strings.ReplaceAll(s, "&", "^&")   // Escape ampersand
+	s = strings.ReplaceAll(s, "|", "^|")   // Escape pipe
+	s = strings.ReplaceAll(s, "!", "^!")   // Escape exclamation
+	s = strings.ReplaceAll(s, "<", "^<")   // Escape less-than
+	s = strings.ReplaceAll(s, ">", "^>")   // Escape greater-than
+	return s
+}
+
 // buildWindowsBatchScript generates a .bat script as a fallback for cmd.exe.
 func buildWindowsBatchScript(name, dir string, args []string, env map[string]string) (script string, scriptPath string) {
 	pidFile := pidFilePath(name)
@@ -76,40 +92,44 @@ func buildWindowsBatchScript(name, dir string, args []string, env map[string]str
 
 	var b strings.Builder
 	b.WriteString("@echo off\n")
-	b.WriteString(fmt.Sprintf("REM codes session: %s\n\n", name))
+	b.WriteString(fmt.Sprintf("REM codes session: %s\n\n", escapeBatchValue(name)))
 
 	// Set window title
-	b.WriteString(fmt.Sprintf("title codes: %s\n\n", name))
+	b.WriteString(fmt.Sprintf("title codes: %s\n\n", escapeBatchValue(name)))
 
-	// Write PID — not directly possible in .bat, but we can use a workaround
-	// We use wmic to get the current PID
-	b.WriteString(fmt.Sprintf("for /f \"tokens=2 delims==\" %%%%i in ('wmic process where \"Name='cmd.exe' and CommandLine like '%%%%%%%%codes-%s.bat%%%%%%%%'\" get ProcessId /value 2^>nul') do echo %%%%i > \"%s\"\n\n",
-		name, pidFile))
+	// Write PID using PowerShell (WMIC is deprecated in Windows 11)
+	// Use PowerShell to get the parent cmd.exe PID
+	b.WriteString(fmt.Sprintf("powershell -NoProfile -Command \"$PID | Out-File -FilePath '%s' -Encoding ascii\"\n\n",
+		strings.ReplaceAll(pidFile, "'", "''")))
 
 	// Set environment variables
 	for k, v := range env {
 		if !validEnvVarName.MatchString(k) {
 			continue
 		}
-		b.WriteString(fmt.Sprintf("SET \"%s=%s\"\n", k, v))
+		b.WriteString(fmt.Sprintf("SET \"%s=%s\"\n", k, escapeBatchValue(v)))
 	}
 	if len(env) > 0 {
 		b.WriteString("\n")
 	}
 
 	// Change to project directory
-	b.WriteString(fmt.Sprintf("cd /d \"%s\"\n\n", dir))
+	b.WriteString(fmt.Sprintf("cd /d \"%s\"\n\n", escapeBatchValue(dir)))
 
 	// Run claude
 	if len(args) > 0 {
-		b.WriteString(fmt.Sprintf("claude %s\n\n", strings.Join(args, " ")))
+		quotedArgs := make([]string, len(args))
+		for i, a := range args {
+			quotedArgs[i] = fmt.Sprintf("\"%s\"", escapeBatchValue(a))
+		}
+		b.WriteString(fmt.Sprintf("claude %s\n\n", strings.Join(quotedArgs, " ")))
 	} else {
 		b.WriteString("claude\n\n")
 	}
 
 	// Cleanup
-	b.WriteString(fmt.Sprintf("del \"%s\" 2>nul\n", pidFile))
-	b.WriteString(fmt.Sprintf("del \"%s\" 2>nul\n", scriptPath))
+	b.WriteString(fmt.Sprintf("del \"%s\" 2>nul\n", escapeBatchValue(pidFile)))
+	b.WriteString(fmt.Sprintf("del \"%s\" 2>nul\n", escapeBatchValue(scriptPath)))
 
 	return b.String(), scriptPath
 }
@@ -275,30 +295,53 @@ func openRemoteInTerminal(sessionID string, host *config.RemoteHost, project str
 		cmd = exec.Command("cmd", "/c", "start", "pwsh", "-NoExit", "-File", scriptPath)
 	case "cmd":
 		// For cmd, we need a .bat script instead
-		batScript, batPath := buildWindowsBatchScript(sessionID, "", nil, nil)
-		// Rewrite with SSH command
+		_, batPath := buildWindowsBatchScript(sessionID, "", nil, nil)
+		// Build custom SSH batch script
 		var b strings.Builder
 		b.WriteString("@echo off\n")
-		b.WriteString(fmt.Sprintf("title codes: %s (remote)\n", sessionID))
+		b.WriteString(fmt.Sprintf("REM codes remote session: %s\n\n", escapeBatchValue(sessionID)))
+		b.WriteString(fmt.Sprintf("title codes: %s (remote)\n\n", escapeBatchValue(sessionID)))
 
+		// Write PID file using PowerShell
+		pidFile := pidFilePath(sessionID)
+		b.WriteString(fmt.Sprintf("powershell -NoProfile -Command \"$PID | Out-File -FilePath '%s' -Encoding ascii\"\n\n",
+			strings.ReplaceAll(pidFile, "'", "''")))
+
+		// Build SSH command arguments
 		var sshArgs []string
 		sshArgs = append(sshArgs, "-t", "-o", "StrictHostKeyChecking=accept-new")
 		if host.Port != 0 {
 			sshArgs = append(sshArgs, "-p", fmt.Sprintf("%d", host.Port))
 		}
 		if host.Identity != "" {
-			sshArgs = append(sshArgs, "-i", host.Identity)
+			identity := host.Identity
+			// Expand ~ to %USERPROFILE% for batch mode
+			if strings.HasPrefix(identity, "~/") {
+				identity = "%USERPROFILE%" + identity[1:]
+			}
+			sshArgs = append(sshArgs, "-i", identity)
 		}
 		sshArgs = append(sshArgs, host.UserAtHost())
 		remoteCmd := "codes"
 		if project != "" {
+			// Note: remoteCmd is used in SSH command, so it needs shell escaping, not batch escaping
 			remoteCmd = fmt.Sprintf("cd \"%s\" && codes", project)
 		}
-		b.WriteString(fmt.Sprintf("ssh %s \"%s\"\n", strings.Join(sshArgs, " "), remoteCmd))
-		b.WriteString(fmt.Sprintf("del \"%s\" 2>nul\n", pidFilePath(sessionID)))
-		b.WriteString(fmt.Sprintf("del \"%s\" 2>nul\n", batPath))
-		batScript = b.String()
-		_ = batScript
+		// Quote SSH args that may contain spaces (e.g. identity file paths)
+		quotedSSHArgs := make([]string, len(sshArgs))
+		for i, arg := range sshArgs {
+			if strings.ContainsAny(arg, " %") {
+				quotedSSHArgs[i] = fmt.Sprintf("\"%s\"", escapeBatchValue(arg))
+			} else {
+				quotedSSHArgs[i] = arg
+			}
+		}
+		b.WriteString(fmt.Sprintf("ssh %s \"%s\"\n\n", strings.Join(quotedSSHArgs, " "), remoteCmd))
+
+		// Cleanup
+		b.WriteString(fmt.Sprintf("del \"%s\" 2>nul\n", escapeBatchValue(pidFile)))
+		b.WriteString(fmt.Sprintf("del \"%s\" 2>nul\n", escapeBatchValue(batPath)))
+		batScript := b.String()
 		os.Remove(scriptPath) // remove the .ps1 we don't need
 		if err := os.WriteFile(batPath, []byte(batScript), 0644); err != nil {
 			return 0, err
@@ -350,12 +393,29 @@ func focusTerminalWindow(terminal string) {
 }
 
 func isProcessAlive(pid int) bool {
-	cmd := exec.Command("tasklist", "/FI", fmt.Sprintf("PID eq %d", pid), "/NH")
-	output, err := cmd.Output()
-	if err != nil {
+	const PROCESS_QUERY_LIMITED_INFORMATION = 0x1000
+	const STILL_ACTIVE = 259
+
+	kernel32 := syscall.NewLazyDLL("kernel32.dll")
+	openProcess := kernel32.NewProc("OpenProcess")
+
+	handle, _, _ := openProcess.Call(
+		PROCESS_QUERY_LIMITED_INFORMATION,
+		0,
+		uintptr(pid),
+	)
+	if handle == 0 {
 		return false
 	}
-	return strings.Contains(string(output), strconv.Itoa(pid))
+	defer syscall.CloseHandle(syscall.Handle(handle))
+
+	var exitCode uint32
+	getExitCodeProcess := kernel32.NewProc("GetExitCodeProcess")
+	ret, _, _ := getExitCodeProcess.Call(uintptr(handle), uintptr(unsafe.Pointer(&exitCode)))
+	if ret == 0 {
+		return false
+	}
+	return exitCode == STILL_ACTIVE
 }
 
 func killProcess(pid int) error {

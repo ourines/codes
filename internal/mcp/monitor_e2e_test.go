@@ -138,6 +138,12 @@ func TestE2E_PiggybackNotifications(t *testing.T) {
 	cs, cleanup := setupTestServer(t, team)
 	defer cleanup()
 
+	// Use an isolated temp dir so running codes-serve processes don't
+	// compete for the same notification files.
+	tmpDir := t.TempDir()
+	notifDirOverride = tmpDir
+	defer func() { notifDirOverride = "" }()
+
 	// 1. Create team + task to start the monitor.
 	callTool(t, cs, "team_create", map[string]any{"name": team})
 	callTool(t, cs, "task_create", map[string]any{
@@ -146,15 +152,6 @@ func TestE2E_PiggybackNotifications(t *testing.T) {
 	})
 
 	// 2. Simulate a daemon writing a notification file.
-	home, err := os.UserHomeDir()
-	if err != nil {
-		t.Fatalf("UserHomeDir: %v", err)
-	}
-	notifDir := filepath.Join(home, ".codes", "notifications")
-	if err := os.MkdirAll(notifDir, 0755); err != nil {
-		t.Fatalf("MkdirAll: %v", err)
-	}
-
 	notif := map[string]any{
 		"team":      team,
 		"taskId":    1,
@@ -165,12 +162,10 @@ func TestE2E_PiggybackNotifications(t *testing.T) {
 		"timestamp": time.Now().UTC().Format(time.RFC3339),
 	}
 	data, _ := json.Marshal(notif)
-	notifPath := filepath.Join(notifDir, fmt.Sprintf("%s__1.json", team))
+	notifPath := filepath.Join(tmpDir, fmt.Sprintf("%s__1.json", team))
 	if err := os.WriteFile(notifPath, data, 0644); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	// Ensure cleanup in case monitor doesn't consume it.
-	defer os.Remove(notifPath)
 
 	// 3. Wait for the monitor goroutine to pick it up (polls every 3s).
 	time.Sleep(5 * time.Second)
@@ -203,9 +198,9 @@ func TestE2E_PiggybackNotifications(t *testing.T) {
 		t.Errorf("notification result = %v, want 'all good'", first["result"])
 	}
 
-	// 5. Verify file was cleaned up by the monitor.
-	if _, err := os.Stat(notifPath); !os.IsNotExist(err) {
-		t.Errorf("notification file should have been removed by monitor")
+	// 5. File should still exist (monitor no longer deletes — team_watch does).
+	if _, err := os.Stat(notifPath); os.IsNotExist(err) {
+		t.Errorf("notification file should still exist for team_watch to consume")
 	}
 }
 

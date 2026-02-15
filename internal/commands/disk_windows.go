@@ -16,30 +16,76 @@ type diskUsage struct {
 }
 
 func getDiskUsage(path string) (*diskUsage, error) {
-	// Use PowerShell to query disk info on Windows.
-	drive := path[:2] // e.g. "C:"
-	out, err := exec.Command("powershell", "-Command",
-		"(Get-PSDrive "+drive[:1]+").Free, (Get-PSDrive "+drive[:1]+").Used").Output()
-	if err != nil {
-		return nil, err
+	// Extract drive letter, handling edge cases
+	if len(path) < 2 || path[1] != ':' {
+		// Not a standard drive path (e.g., UNC path, relative path)
+		// Return zero usage gracefully
+		return &diskUsage{
+			Available:   0,
+			Total:       0,
+			UsedPercent: 0,
+		}, nil
 	}
+
+	drive := path[:1] // e.g. "C"
+
+	// Use PowerShell with null checks to handle network drives and unmounted drives
+	cmd := fmt.Sprintf(
+		"$d = Get-PSDrive %s -ErrorAction SilentlyContinue; "+
+			"if ($d -and $d.Free -ne $null -and $d.Used -ne $null) { "+
+			"Write-Output $d.Free; Write-Output $d.Used "+
+			"} else { "+
+			"Write-Output 0; Write-Output 0 "+
+			"}",
+		drive,
+	)
+
+	out, err := exec.Command("powershell", "-NoProfile", "-Command", cmd).Output()
+	if err != nil {
+		// Gracefully handle PowerShell failures (e.g., restricted execution policy)
+		return &diskUsage{
+			Available:   0,
+			Total:       0,
+			UsedPercent: 0,
+		}, nil
+	}
+
 	lines := strings.Fields(strings.TrimSpace(string(out)))
 	if len(lines) < 2 {
-		return nil, fmt.Errorf("unexpected powershell output")
+		// Unexpected output, return zero usage
+		return &diskUsage{
+			Available:   0,
+			Total:       0,
+			UsedPercent: 0,
+		}, nil
 	}
+
 	free, err := strconv.ParseUint(lines[0], 10, 64)
 	if err != nil {
-		return nil, err
+		// Parse failure (e.g., non-numeric output), return zero
+		return &diskUsage{
+			Available:   0,
+			Total:       0,
+			UsedPercent: 0,
+		}, nil
 	}
+
 	used, err := strconv.ParseUint(lines[1], 10, 64)
 	if err != nil {
-		return nil, err
+		// Parse failure, return zero
+		return &diskUsage{
+			Available:   0,
+			Total:       0,
+			UsedPercent: 0,
+		}, nil
 	}
+
 	total := free + used
 	var pct float64
 	if total > 0 {
 		pct = float64(used) / float64(total) * 100
 	}
+
 	return &diskUsage{
 		Available:   free,
 		Total:       total,
