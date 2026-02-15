@@ -169,6 +169,14 @@ Atomic writes via temp file + rename. File locks prevent race conditions during 
 - **Agent task claiming**: Auto-claim uses read-modify-write pattern with error handling for race conditions. Failed claims are silently skipped (another agent won).
 - **Agent file locking**: Future enhancement for coordinated task claims across distributed agents (current impl relies on filesystem atomic renames).
 
+## E2E Testing Policy
+
+每个 feature/issue 在关闭前必须通过 e2e 验证。流程：
+1. 读取 issue 要求，提取验收标准
+2. 执行 `/codes-e2e-test` skill 中对应的测试
+3. 所有 checklist 通过后，附结果关闭 issue
+4. 新功能必须同时更新 skill 中的测试用例
+
 ## CI/CD
 
 - **CI** (`ci.yml`): `go vet`, `go test`, build + smoke tests on ubuntu + windows
