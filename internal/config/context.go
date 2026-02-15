@@ -7,6 +7,9 @@ import (
 	"strings"
 )
 
+// loadConfigFunc is the config loader function, overridable in tests.
+var loadConfigFunc = LoadConfig
+
 // ProjectLink defines a relationship between projects.
 type ProjectLink struct {
 	Name            string   `json:"name"`                        // linked project name
@@ -16,7 +19,7 @@ type ProjectLink struct {
 
 // LinkProject creates a link between two projects.
 func LinkProject(projectName, linkedProject, role string) error {
-	cfg, err := LoadConfig()
+	cfg, err := loadConfigFunc()
 	if err != nil {
 		return err
 	}
@@ -48,7 +51,7 @@ func LinkProject(projectName, linkedProject, role string) error {
 
 // UnlinkProject removes a link between two projects.
 func UnlinkProject(projectName, linkedProject string) error {
-	cfg, err := LoadConfig()
+	cfg, err := loadConfigFunc()
 	if err != nil {
 		return err
 	}
@@ -79,7 +82,7 @@ func UnlinkProject(projectName, linkedProject string) error {
 
 // GetLinkedProjectsSummary generates a context summary of linked projects.
 func GetLinkedProjectsSummary(projectName string) (string, error) {
-	cfg, err := LoadConfig()
+	cfg, err := loadConfigFunc()
 	if err != nil {
 		return "", err
 	}
@@ -135,4 +138,14 @@ func GetLinkedProjectsSummary(projectName string) (string, error) {
 	}
 
 	return b.String(), nil
+}
+
+// LinkedContextArgs returns extra Claude CLI args to inject linked project context.
+// Returns nil if no links exist for the project.
+func LinkedContextArgs(projectName string) []string {
+	summary, err := GetLinkedProjectsSummary(projectName)
+	if err != nil || summary == "" {
+		return nil
+	}
+	return []string{"--append-system-prompt", summary}
 }

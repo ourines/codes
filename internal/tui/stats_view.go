@@ -69,10 +69,6 @@ func (m Model) updateStats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
-	case "tab":
-		m.state = viewProjects
-		m.focus = focusLeft
-		return m, nil
 	case "w":
 		m.statsRange = "week"
 		m.statsLoading = true

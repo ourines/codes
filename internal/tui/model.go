@@ -291,13 +291,19 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updateRemoteForm(msg)
 		}
 		if m.state == viewSettings {
-			return m.updateSettings(msg)
+			if msg.String() != "tab" {
+				return m.updateSettings(msg)
+			}
 		}
 		if m.state == viewStats {
-			return m.updateStats(msg)
+			if msg.String() != "tab" {
+				return m.updateStats(msg)
+			}
 		}
 		if m.state == viewTaskQueue {
-			return m.updateTaskQueue(msg)
+			if msg.String() != "tab" {
+				return m.updateTaskQueue(msg)
+			}
 		}
 		if m.state == viewSessionSummary {
 			return m.updateSessionSummary(msg)
@@ -306,7 +312,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updatePartialRollback(msg)
 		}
 		if m.state == viewWorkflows {
-			return m.updateWorkflows(msg)
+			if msg.String() != "tab" {
+				return m.updateWorkflows(msg)
+			}
 		}
 
 		// Right panel focused — handle session selection
@@ -612,6 +620,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 					// Local project → session in new terminal
 					args, env := config.ClaudeCmdSpec()
+					args = append(args, config.LinkedContextArgs(name)...)
 					return m, func() tea.Msg {
 						_, err := m.sessionMgr.StartSession(name, path, args, env)
 						return sessionStartedMsg{name: name, err: err}
@@ -1002,10 +1011,6 @@ func (m Model) updateSettings(msg tea.Msg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "q", "ctrl+c":
 			return m, tea.Quit
-		case "tab":
-			m.state = viewProjects
-			m.focus = focusLeft
-			return m, nil
 		case "up", "k":
 			if m.settings.cursor > 0 {
 				m.settings.cursor--
@@ -1113,6 +1118,7 @@ func (m Model) updateRightPanel(msg tea.Msg) (tea.Model, tea.Cmd) {
 				path := item.info.Path
 				m.focus = focusLeft
 				args, env := config.ClaudeCmdSpec()
+				args = append(args, config.LinkedContextArgs(name)...)
 				return m, func() tea.Msg {
 					_, err := m.sessionMgr.StartSession(name, path, args, env)
 					return sessionStartedMsg{name: name, err: err}
