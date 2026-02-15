@@ -11,6 +11,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"time"
 
 	"codes/internal/config"
 	mcpserver "codes/internal/mcp"
@@ -1296,8 +1297,11 @@ func testSingleConfiguration(apiConfig *config.APIConfig) {
 
 	// 测试 API 连接
 	ui.ShowLoading("Testing API connection...")
-	if config.TestAPIConfig(*apiConfig) {
-		ui.ShowSuccess("API connection successful!")
+	start := time.Now()
+	success := config.TestAPIConfig(*apiConfig)
+	latency := time.Since(start)
+	if success {
+		ui.ShowSuccess("API connection successful! (Latency: %dms)", latency.Milliseconds())
 		apiConfig.Status = "active"
 	} else {
 		ui.ShowError("API connection failed", nil)
@@ -1346,15 +1350,17 @@ func testAllConfigurations(configs []config.APIConfig) {
 		}
 
 		// 测试 API 连接
+		start := time.Now()
 		success := config.TestAPIConfig(configs[i])
+		latency := time.Since(start)
 		results[configs[i].Name] = success
 
 		if success {
-			fmt.Printf(" ✓ (Model: %s)\n", model)
+			fmt.Printf(" ✓ (Model: %s, Latency: %dms)\n", model, latency.Milliseconds())
 			statuses[configs[i].Name] = "active"
 			successCount++
 		} else {
-			fmt.Printf(" ✗ (Model: %s)\n", model)
+			fmt.Printf(" ✗ (Model: %s, Latency: %dms)\n", model, latency.Milliseconds())
 			statuses[configs[i].Name] = "inactive"
 		}
 	}
