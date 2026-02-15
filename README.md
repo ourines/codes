@@ -9,7 +9,9 @@ Environment configuration management, project management, and multi-agent collab
 - **Profile Switching** — Manage multiple API configurations (Anthropic, proxies, custom endpoints) and switch instantly
 - **Project Management** — Project aliases, workspace management, interactive TUI
 - **Agent Teams** — Autonomous Claude agents collaborating with task dependencies, messaging, and auto-reporting
-- **MCP Server** — 29 tools integrated into Claude Code for managing everything from conversations
+- **Workflow Templates** — YAML-based agent team templates for repeatable multi-agent pipelines
+- **Cost Tracking** — Session-level API usage statistics by project and model
+- **MCP Server** — 39 tools integrated into Claude Code for managing everything from conversations
 - **Cross-Platform** — Linux, macOS, Windows (amd64 & arm64)
 
 ## Install
@@ -57,12 +59,14 @@ Add `codes` as an MCP server to let Claude Code manage agent teams, projects, an
 }
 ```
 
-Once configured, Claude Code gains access to 29 MCP tools:
+Once configured, Claude Code gains access to 39 MCP tools:
 
 | Category | Tools | Examples |
 |----------|-------|---------|
 | **Config** (10) | Projects, profiles, remotes | `list_projects`, `switch_profile`, `sync_remote` |
-| **Agent** (19) | Teams, tasks, messages | `team_create`, `task_create`, `message_send` |
+| **Agent** (21) | Teams, tasks, messages | `team_create`, `task_create`, `message_send` |
+| **Stats** (4) | Usage tracking | `stats_summary`, `stats_by_project`, `stats_by_model` |
+| **Workflow** (4) | Templates | `workflow_list`, `workflow_run`, `workflow_create` |
 
 Usage in Claude Code:
 
@@ -102,6 +106,49 @@ Agents run as independent daemon processes, polling a shared file-based task que
 
 All state lives in `~/.codes/teams/<name>/` as JSON files — no databases, no message brokers. Filesystem atomic renames guarantee safe concurrent access.
 
+## Workflow Templates
+
+Workflows are reusable YAML templates that define agent teams and tasks. Running a workflow creates a team, starts agents, and queues tasks — all in one command.
+
+```bash
+# List available workflows
+codes workflow list
+
+# Run a built-in workflow
+codes workflow run pre-pr-check
+
+# Create your own
+codes workflow create my-pipeline
+```
+
+Example workflow YAML (`~/.codes/workflows/my-pipeline.yml`):
+
+```yaml
+name: my-pipeline
+description: Build, test, and review
+agents:
+  - name: builder
+    role: Build and compile the project
+  - name: tester
+    role: Run tests and report failures
+  - name: reviewer
+    role: Review code quality
+tasks:
+  - subject: Build project
+    assign: builder
+    prompt: Run the build and fix any compilation errors
+  - subject: Run tests
+    assign: tester
+    prompt: Execute the test suite and report results
+    blocked_by: [1]
+  - subject: Code review
+    assign: reviewer
+    prompt: Review recent changes for quality issues
+    blocked_by: [1]
+```
+
+Workflows can also be created programmatically via the `workflow_create` MCP tool.
+
 ## Commands
 
 ```
@@ -109,6 +156,7 @@ codes                                    # Launch TUI (when TTY detected)
 codes init [--yes]                       # Install binary + shell completion
 codes start <path|alias>                 # Launch Claude in directory (alias: s)
 codes version / update                   # Version info / update Claude CLI
+codes doctor                             # System diagnostics
 ```
 
 ### Profile Management (`codes profile`, alias: `pf`)
@@ -134,6 +182,7 @@ codes config get [key]                   # Show settings
 codes config set <key> <value>           # Set value
 codes config list <key>                  # List available values
 codes config reset [key]                 # Reset to default
+codes config export / import <file>      # Export/import configuration
 ```
 
 | Key | Values | Description |
@@ -164,6 +213,24 @@ codes agent task get <team> <id> / cancel <team> <id>
 # Messages
 codes agent message send <team> <content> --from <agent> [--to <agent>]
 codes agent message list <team> --agent <name>
+```
+
+### Workflow Templates (`codes workflow`, alias: `wf`)
+
+```bash
+codes workflow list                      # List all workflows
+codes workflow run <name> [-d <dir>] [-m <model>] [-p <project>]
+codes workflow create <name>             # Create template
+codes workflow delete <name>
+```
+
+### Cost Tracking (`codes stats`, alias: `st`)
+
+```bash
+codes stats summary [period]             # Cost summary (today/week/month/all)
+codes stats project [name]               # Cost by project
+codes stats model                        # Cost by model
+codes stats refresh                      # Force cache rebuild
 ```
 
 ### Remote Hosts (`codes remote`, alias: `r`)
@@ -220,13 +287,15 @@ codes/
 ├── cmd/codes/          # Entry point
 ├── internal/
 │   ├── agent/          # Agent teams: daemon, runner, storage
-│   ├── mcp/            # MCP server (29 tools, stdio transport)
-│   ├── tui/            # Interactive TUI (bubbletea)
 │   ├── commands/       # Cobra CLI commands
 │   ├── config/         # Configuration management
+│   ├── mcp/            # MCP server (39 tools, stdio transport)
 │   ├── session/        # Terminal session manager
+│   ├── stats/          # Cost tracking and aggregation
 │   ├── remote/         # SSH remote management
-│   └── ui/             # CLI output helpers
+│   ├── tui/            # Interactive TUI (bubbletea)
+│   ├── ui/             # CLI output helpers
+│   └── workflow/       # Workflow templates and orchestration
 └── .github/workflows/  # CI/CD
 ```
 

@@ -9,7 +9,9 @@ Claude Code 的环境配置管理、项目管理与多 Agent 协作工具。一�
 - **Profile 切换** — 多套 API 环境配置（Anthropic、代理、自定义端点）一键切换
 - **项目管理** — 项目别名、工作目录管理，TUI 可视化操作
 - **Agent 团队** — 多个 Claude Agent 自治协作，任务依赖、消息传递、自动汇报
-- **MCP Server** — 29 个工具集成到 Claude Code，直接在对话中管理一切
+- **Workflow 模板** — YAML 定义的 Agent 团队模板，一键启动可复用的多 Agent 流水线
+- **成本追踪** — 按项目、模型维度的 API 用量统计
+- **MCP Server** — 39 个工具集成到 Claude Code，直接在对话中管理一切
 - **跨平台** — Linux, macOS, Windows (amd64 & arm64)
 
 ## 安装
@@ -57,12 +59,14 @@ git clone https://github.com/ourines/codes.git && cd codes && make build
 }
 ```
 
-配置完成后，Claude Code 即可使用 29 个 MCP 工具：
+配置完成后，Claude Code 即可使用 39 个 MCP 工具：
 
 | 分类 | 工具 | 示例 |
 |------|------|------|
 | **配置管理** (10) | 项目、Profile、远程主机 | `list_projects`、`switch_profile`、`sync_remote` |
-| **Agent** (19) | 团队、任务、消息 | `team_create`、`task_create`、`message_send` |
+| **Agent** (21) | 团队、任务、消息 | `team_create`、`task_create`、`message_send` |
+| **统计** (4) | 用量追踪 | `stats_summary`、`stats_by_project`、`stats_by_model` |
+| **Workflow** (4) | 模板 | `workflow_list`、`workflow_run`、`workflow_create` |
 
 在 Claude Code 中使用：
 
@@ -72,7 +76,7 @@ git clone https://github.com/ourines/codes.git && cd codes && make build
 Claude: 我来组建一个包含 coder 和 tester 的团队...
         [调用 team_create, agent_add, task_create 工具]
 
-你: 进度如何？
+你: 进��如何？
 
 Claude: [调用 team_status 工具]
         coder 已完成 2/3 个任务。tester 正在等待任务 #3 完成。
@@ -102,6 +106,49 @@ Agent 以独立守护进程运行，每 3 秒轮询共享的文件任务队列�
 
 所有状态以 JSON 文件存储在 `~/.codes/teams/<name>/` 下 — 无需数据库或消息中间件。文件系统原子重命名保证并发安全。
 
+## Workflow 模板
+
+Workflow 是可复用的 YAML 模板，定义 Agent 团队和任务。运行 workflow 会自动创建团队、启动 Agent、提交任务 — 一条命令搞定。
+
+```bash
+# 列出可用 workflow
+codes workflow list
+
+# 运行内置 workflow
+codes workflow run pre-pr-check
+
+# 创建自定义 workflow
+codes workflow create my-pipeline
+```
+
+Workflow YAML 示例（`~/.codes/workflows/my-pipeline.yml`）：
+
+```yaml
+name: my-pipeline
+description: 构建、测试、审查
+agents:
+  - name: builder
+    role: 构建编译项目
+  - name: tester
+    role: 运行测试并报告失败
+  - name: reviewer
+    role: 审查代码质量
+tasks:
+  - subject: 构建项目
+    assign: builder
+    prompt: 运行构建并修复编译错误
+  - subject: 运行测试
+    assign: tester
+    prompt: 执行测试套件并报告结果
+    blocked_by: [1]
+  - subject: 代码审查
+    assign: reviewer
+    prompt: 审查最近的代码变更
+    blocked_by: [1]
+```
+
+也可通过 `workflow_create` MCP 工具在对话中创建 workflow。
+
 ## 命令参考
 
 ```
@@ -109,6 +156,7 @@ codes                                    # 启动 TUI（检测到 TTY 时）
 codes init [--yes]                       # 安装二进制文件 + shell 补全
 codes start <路径|别名>                   # 在指定目录启动 Claude（别名: s）
 codes version / update                   # 版本信息 / 更新 Claude CLI
+codes doctor                             # 系统诊断
 ```
 
 ### Profile 管理 (`codes profile`，别名: `pf`)
@@ -134,6 +182,7 @@ codes config get [key]                   # 查看配置
 codes config set <key> <value>           # 设置值
 codes config list <key>                  # 列出可选值
 codes config reset [key]                 # 重置为默认
+codes config export / import <file>      # 导出/导入配置
 ```
 
 | 配置项 | 可选值 | 说明 |
@@ -164,6 +213,24 @@ codes agent task get <team> <id> / cancel <team> <id>
 # 消息
 codes agent message send <team> <内容> --from <agent> [--to <agent>]
 codes agent message list <team> --agent <name>
+```
+
+### Workflow 模板 (`codes workflow`，别名: `wf`)
+
+```bash
+codes workflow list                      # 列出所有 workflow
+codes workflow run <name> [-d <目录>] [-m <模型>] [-p <项目>]
+codes workflow create <name>             # 创建模板
+codes workflow delete <name>
+```
+
+### 成本追踪 (`codes stats`，别名: `st`)
+
+```bash
+codes stats summary [period]             # 成本概要 (today/week/month/all)
+codes stats project [name]               # 按项目统计
+codes stats model                        # 按模型统计
+codes stats refresh                      # 强制刷新缓存
 ```
 
 ### 远程主机 (`codes remote`，别名: `r`)
@@ -220,13 +287,15 @@ codes/
 ├── cmd/codes/          # 入口
 ├── internal/
 │   ├── agent/          # Agent 团队：守护进程、任务执行、存储
-│   ├── mcp/            # MCP Server（29 工具，stdio 传输）
-│   ├── tui/            # 交互式 TUI（bubbletea）
 │   ├── commands/       # Cobra CLI 命令
 │   ├── config/         # 配置管理
+│   ├── mcp/            # MCP Server（39 工具，stdio 传输）
 │   ├── session/        # 终端会话管理
+│   ├── stats/          # 成本追踪与聚合
 │   ├── remote/         # SSH 远程管理
-│   └── ui/             # CLI 输出工具
+│   ├── tui/            # 交互式 TUI（bubbletea）
+│   ├── ui/             # CLI 输出工具
+│   └── workflow/       # Workflow 模板与编排
 └── .github/workflows/  # CI/CD
 ```
 
