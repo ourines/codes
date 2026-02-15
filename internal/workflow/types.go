@@ -17,16 +17,33 @@ type Step struct {
 
 // WorkflowRun tracks the execution state of a workflow.
 type WorkflowRun struct {
+	ID          string       `json:"id"`          // Unique run ID (timestamp-based)
 	Workflow    *Workflow    `json:"workflow"`
 	CurrentStep int          `json:"currentStep"`
-	Status      string       `json:"status"` // "running", "paused", "completed", "failed"
+	Status      string       `json:"status"` // "running", "paused", "completed", "failed", "aborted"
 	Results     []StepResult `json:"results"`
+	WorkDir     string       `json:"workDir,omitempty"`
+	Model       string       `json:"model,omitempty"`
+	StartedAt   string       `json:"startedAt,omitempty"`  // RFC3339 timestamp
+	CompletedAt string       `json:"completedAt,omitempty"` // RFC3339 timestamp
 }
 
 // StepResult holds the output of a completed step.
 type StepResult struct {
-	StepName string  `json:"stepName"`
-	Result   string  `json:"result"`
-	Cost     float64 `json:"cost,omitempty"`
-	Error    string  `json:"error,omitempty"`
+	StepName       string  `json:"stepName"`
+	Result         string  `json:"result"`
+	Cost           float64 `json:"cost,omitempty"`
+	Error          string  `json:"error,omitempty"`
+	ApprovalStatus string  `json:"approvalStatus,omitempty"` // "approved", "rejected", "skipped"
+	Retries        int     `json:"retries,omitempty"`         // Number of retry attempts
 }
+
+// ApprovalDecision represents user's decision after reviewing a step result.
+type ApprovalDecision string
+
+const (
+	ApprovalApprove ApprovalDecision = "approve" // Continue to next step
+	ApprovalReject  ApprovalDecision = "reject"  // Retry current step
+	ApprovalSkip    ApprovalDecision = "skip"    // Skip current step and continue
+	ApprovalAbort   ApprovalDecision = "abort"   // Stop workflow execution
+)

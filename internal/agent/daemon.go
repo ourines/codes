@@ -473,6 +473,9 @@ func (d *Daemon) writeNotification(task *Task, status, detail string) {
 	}); err != nil {
 		d.logger.Printf("notification: desktop notify error: %v", err)
 	}
+
+	// Send webhook notifications (if configured)
+	d.sendWebhookNotifications(status, task)
 }
 
 // truncate shortens a string to maxLen, adding "..." if truncated.
@@ -482,4 +485,46 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// sendWebhookNotifications sends notifications to all configured webhooks.
+func (d *Daemon) sendWebhookNotifications(status string, task *Task) {
+	webhooks, err := config.ListWebhooks()
+	if err != nil || len(webhooks) == 0 {
+		return
+	}
+
+	// Determine event type
+	eventType := "task_completed"
+	if status == "failed" {
+		eventType = "task_failed"
+	}
+
+	notification := notify.Notification{
+		Title:   fmt.Sprintf("codes: Task %s", status),
+		Message: fmt.Sprintf("[%s] #%d %s", d.TeamName, task.ID, task.Subject),
+		Sound:   false, // webhooks don't use sound
+	}
+
+	for _, webhook := range webhooks {
+		// Check event filter
+		if len(webhook.Events) > 0 {
+			allowed := false
+			for _, event := range webhook.Events {
+				if event == eventType {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
+		}
+
+		// Send notification
+		notifier := notify.NewWebhookNotifier(webhook.URL, webhook.Format)
+		if err := notifier.Send(notification); err != nil {
+			d.logger.Printf("webhook notification error (%s): %v", webhook.URL, err)
+		}
+	}
 }

@@ -56,7 +56,10 @@ func RunWorkflowRun(name, dir, model string) {
 	fmt.Println()
 
 	ctx := context.Background()
-	run, err := workflow.RunWorkflow(ctx, wf, dir, model)
+	run, err := workflow.RunWorkflow(ctx, wf, workflow.RunWorkflowOptions{
+		WorkDir: dir,
+		Model:   model,
+	})
 	if err != nil {
 		ui.ShowError("Workflow execution failed", err)
 		return

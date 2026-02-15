@@ -74,7 +74,14 @@ func workflowRunHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input 
 	if workDir == "" {
 		workDir, _ = os.Getwd()
 	}
-	run, err := workflow.RunWorkflow(ctx, wf, workDir, input.Model)
+
+	// MCP runs in non-interactive mode: use auto-approval
+	run, err := workflow.RunWorkflow(ctx, wf, workflow.RunWorkflowOptions{
+		WorkDir:        workDir,
+		Model:          input.Model,
+		ApprovalPrompt: workflow.NewAutoApprovalPrompt(), // Auto-approve in MCP mode
+		MaxRetries:     3,
+	})
 	if err != nil {
 		return nil, workflowRunOutput{}, err
 	}
