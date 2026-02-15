@@ -70,5 +70,8 @@ func RunServer() error {
 	// Agent team tools
 	registerAgentTools(server)
 
+	// Workflow tools
+	registerWorkflowTools(server)
+
 	return server.Run(context.Background(), &mcpsdk.StdioTransport{})
 }
