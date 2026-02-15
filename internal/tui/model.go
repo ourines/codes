@@ -31,6 +31,8 @@ const (
 	viewAddForm
 	viewAddProfile
 	viewAddRemote
+	viewSessionSummary
+	viewPartialRollback
 )
 
 type panelFocus int
@@ -67,6 +69,11 @@ type Model struct {
 	statsRecords []stats.SessionRecord
 	statsRange   string // "week" | "month" | "all"
 	statsLoading bool
+	// Checkpoint
+	checkpoint      *session.Checkpoint
+	diffSummary     *session.DiffSummary
+	rollbackItems   []rollbackItem
+	rollbackCursor  int
 }
 
 // projectDeletedMsg is sent after deleting a project.
@@ -274,6 +281,12 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.state == viewStats {
 			return m.updateStats(msg)
+		}
+		if m.state == viewSessionSummary {
+			return m.updateSessionSummary(msg)
+		}
+		if m.state == viewPartialRollback {
+			return m.updatePartialRollback(msg)
 		}
 
 		// Right panel focused — handle session selection
@@ -840,6 +853,41 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.latestVersion = msg.latestVersion
 		return m, nil
 
+	case checkpointCreatedMsg:
+		if msg.err != nil {
+			m.err = fmt.Sprintf("checkpoint: %v", msg.err)
+			return m, nil
+		}
+		m.checkpoint = msg.cp
+		m.state = viewSessionSummary
+		m.statusMsg = "loading diff..."
+		cp := msg.cp
+		return m, func() tea.Msg {
+			summary, err := session.GetDiffSummary(cp.Dir, cp)
+			return diffLoadedMsg{summary: summary, err: err}
+		}
+
+	case diffLoadedMsg:
+		m.statusMsg = ""
+		if msg.err != nil {
+			m.err = fmt.Sprintf("diff: %v", msg.err)
+		} else {
+			m.diffSummary = msg.summary
+		}
+		return m, nil
+
+	case rollbackDoneMsg:
+		if msg.err != nil {
+			m.err = fmt.Sprintf("rollback: %v", msg.err)
+		} else {
+			m.statusMsg = "rollback complete"
+		}
+		m.state = viewProjects
+		m.checkpoint = nil
+		m.diffSummary = nil
+		m.rollbackItems = nil
+		return m, nil
+
 	case settingChangedMsg:
 		m.cfg, _ = config.LoadConfig()
 		return m, nil
@@ -1061,6 +1109,12 @@ func (m Model) View() string {
 		// Stats uses full width, no left/right split
 		contentHeight := m.height - 7
 		b.WriteString(renderStatsView(m.statsDaily, m.statsRecords, m.statsRange, m.statsLoading, innerWidth, contentHeight))
+	} else if m.state == viewSessionSummary {
+		contentHeight := m.height - 7
+		b.WriteString(m.renderSessionSummary(innerWidth, contentHeight))
+	} else if m.state == viewPartialRollback {
+		contentHeight := m.height - 7
+		b.WriteString(m.renderPartialRollback(innerWidth, contentHeight))
 	} else {
 		// Main content: left list + right detail
 		leftWidth := innerWidth / 2
@@ -1189,6 +1243,12 @@ func (m Model) renderHelp() string {
 	}
 	if m.state == viewStats {
 		return formHintStyle.Render("w week  m month  a all time  r refresh  tab switch  q quit")
+	}
+	if m.state == viewSessionSummary {
+		return formHintStyle.Render("r rollback all  p partial rollback  enter keep & return  esc cancel")
+	}
+	if m.state == viewPartialRollback {
+		return formHintStyle.Render("↑↓/jk select  space toggle  enter apply  esc back  q quit")
 	}
 	if m.focus == focusRight && m.state == viewProjects {
 		return formHintStyle.Render("↑↓/jk select  Enter open  x kill  ← back  q quit")
