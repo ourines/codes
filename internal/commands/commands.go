@@ -1196,6 +1196,28 @@ func RunProjectScan() {
 	fmt.Println()
 }
 
+// RunProjectLink creates a link between two projects.
+func RunProjectLink(project, linkedProject, role string) {
+	if err := config.LinkProject(project, linkedProject, role); err != nil {
+		ui.ShowError("Failed to link projects", err)
+		return
+	}
+	msg := fmt.Sprintf("Linked %s → %s", project, linkedProject)
+	if role != "" {
+		msg += fmt.Sprintf(" (role: %s)", role)
+	}
+	ui.ShowSuccess("%s", msg)
+}
+
+// RunProjectUnlink removes a link between two projects.
+func RunProjectUnlink(project, linkedProject string) {
+	if err := config.UnlinkProject(project, linkedProject); err != nil {
+		ui.ShowError("Failed to unlink projects", err)
+		return
+	}
+	ui.ShowSuccess("Unlinked %s → %s", project, linkedProject)
+}
+
 // runClaudeInDirectory 在指定目录运行 Claude
 func runClaudeInDirectory(dir string) {
 	// 调用更新检查

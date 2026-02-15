@@ -287,12 +287,43 @@ var ProjectScanCmd = &cobra.Command{
 	},
 }
 
+// ProjectLinkCmd links two projects for cross-project context sharing.
+var ProjectLinkCmd = &cobra.Command{
+	Use:               "link <project> <linked-project>",
+	Short:             "Link two projects",
+	Long:              "Create a link between two projects for cross-project context sharing",
+	Args:              cobra.ExactArgs(2),
+	ValidArgsFunction: completeProjectNames,
+	Run: func(cmd *cobra.Command, args []string) {
+		role, _ := cmd.Flags().GetString("role")
+		RunProjectLink(args[0], args[1], role)
+	},
+}
+
+// ProjectUnlinkCmd removes a link between two projects.
+var ProjectUnlinkCmd = &cobra.Command{
+	Use:               "unlink <project> <linked-project>",
+	Short:             "Unlink two projects",
+	Long:              "Remove the link between two projects",
+	Args:              cobra.ExactArgs(2),
+	ValidArgsFunction: completeProjectNames,
+	Run: func(cmd *cobra.Command, args []string) {
+		RunProjectUnlink(args[0], args[1])
+	},
+}
+
+func init() {
+	ProjectLinkCmd.Flags().StringP("role", "r", "", "Role of the linked project (e.g. 'API provider')")
+}
+
 func init() {
 	ProjectAddCmd.Flags().StringP("remote", "r", "", "Remote host name (for remote projects)")
 	ProjectCmd.AddCommand(ProjectAddCmd)
 	ProjectCmd.AddCommand(ProjectRemoveCmd)
 	ProjectCmd.AddCommand(ProjectListCmd)
 	ProjectCmd.AddCommand(ProjectScanCmd)
+	ProjectCmd.AddCommand(ProjectLinkCmd)
+	ProjectCmd.AddCommand(ProjectUnlinkCmd)
 
 	ProfileCmd.AddCommand(AddCmd, SelectCmd, TestCmd, ProfileListCmd, ProfileRemoveCmd)
 
