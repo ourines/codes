@@ -1,6 +1,8 @@
 **/config.json
 config.json
 
+docs/
+
 # Binary
 /codes
 /codes.exe
