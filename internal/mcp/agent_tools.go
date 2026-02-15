@@ -11,7 +11,8 @@ import (
 	"codes/internal/agent"
 )
 
-const notificationMonitorCmd = `mkdir -p ~/.codes/notifications && echo "Monitoring agent notifications..." && for i in $(seq 1 360); do files=$(ls ~/.codes/notifications/*.json 2>/dev/null); if [ -n "$files" ]; then echo "=== Agent Notification ==="; for f in $files; do cat "$f"; echo ""; rm "$f"; done; i=0; fi; sleep 5; done`
+// mcpServer holds the server reference for the background notification monitor.
+var mcpServer *mcpsdk.Server
 
 // -- team_create --
 
@@ -163,7 +164,8 @@ type agentListInput struct {
 }
 
 type agentListOutput struct {
-	Agents []agentInfo `json:"agents"`
+	Agents        []agentInfo        `json:"agents"`
+	Notifications []taskNotification `json:"pending_notifications,omitempty"`
 }
 
 func agentListHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input agentListInput) (*mcpsdk.CallToolResult, agentListOutput, error) {
@@ -181,7 +183,7 @@ func agentListHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input ag
 		agents = append(agents, info)
 	}
 
-	return nil, agentListOutput{Agents: agents}, nil
+	return nil, agentListOutput{Agents: agents, Notifications: drainPendingNotifications()}, nil
 }
 
 // -- agent_start --
@@ -192,9 +194,10 @@ type agentStartInput struct {
 }
 
 type agentStartOutput struct {
-	Started    bool   `json:"started"`
-	PID        int    `json:"pid,omitempty"`
-	MonitorCmd string `json:"monitor_cmd" jsonschema:"Bash command to monitor agent notifications. Run this in a background Task to receive completion alerts."`
+	Started       bool               `json:"started"`
+	PID           int                `json:"pid,omitempty"`
+	MonitorActive bool               `json:"monitor_active"`
+	Notifications []taskNotification `json:"pending_notifications,omitempty"`
 }
 
 func agentStartHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input agentStartInput) (*mcpsdk.CallToolResult, agentStartOutput, error) {
@@ -230,7 +233,15 @@ func agentStartHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input a
 	pid := cmd.Process.Pid
 	cmd.Process.Release() // detach
 
-	return nil, agentStartOutput{Started: true, PID: pid, MonitorCmd: notificationMonitorCmd}, nil
+	// Ensure background notification monitor is running
+	ensureMonitorRunning(mcpServer)
+
+	return nil, agentStartOutput{
+		Started:       true,
+		PID:           pid,
+		MonitorActive: monitorRunning.Load(),
+		Notifications: drainPendingNotifications(),
+	}, nil
 }
 
 // -- agent_stop --
@@ -266,7 +277,9 @@ type taskCreateInput struct {
 }
 
 type taskCreateOutput struct {
-	Task *agent.Task `json:"task"`
+	Task          *agent.Task        `json:"task"`
+	MonitorActive bool               `json:"monitor_active"`
+	Notifications []taskNotification `json:"pending_notifications,omitempty"`
 }
 
 func taskCreateHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input taskCreateInput) (*mcpsdk.CallToolResult, taskCreateOutput, error) {
@@ -277,7 +290,15 @@ func taskCreateHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input t
 	if err != nil {
 		return nil, taskCreateOutput{}, err
 	}
-	return nil, taskCreateOutput{Task: task}, nil
+
+	// Ensure background notification monitor is running
+	ensureMonitorRunning(mcpServer)
+
+	return nil, taskCreateOutput{
+		Task:          task,
+		MonitorActive: monitorRunning.Load(),
+		Notifications: drainPendingNotifications(),
+	}, nil
 }
 
 // -- task_update --
@@ -330,7 +351,8 @@ type taskListInput struct {
 }
 
 type taskListOutput struct {
-	Tasks []*agent.Task `json:"tasks"`
+	Tasks         []*agent.Task      `json:"tasks"`
+	Notifications []taskNotification `json:"pending_notifications,omitempty"`
 }
 
 func taskListHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input taskListInput) (*mcpsdk.CallToolResult, taskListOutput, error) {
@@ -341,7 +363,7 @@ func taskListHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input tas
 	if tasks == nil {
 		tasks = []*agent.Task{}
 	}
-	return nil, taskListOutput{Tasks: tasks}, nil
+	return nil, taskListOutput{Tasks: tasks, Notifications: drainPendingNotifications()}, nil
 }
 
 // -- task_get --
@@ -352,7 +374,8 @@ type taskGetInput struct {
 }
 
 type taskGetOutput struct {
-	Task *agent.Task `json:"task"`
+	Task          *agent.Task        `json:"task"`
+	Notifications []taskNotification `json:"pending_notifications,omitempty"`
 }
 
 func taskGetHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input taskGetInput) (*mcpsdk.CallToolResult, taskGetOutput, error) {
@@ -360,7 +383,7 @@ func taskGetHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input task
 	if err != nil {
 		return nil, taskGetOutput{}, err
 	}
-	return nil, taskGetOutput{Task: task}, nil
+	return nil, taskGetOutput{Task: task, Notifications: drainPendingNotifications()}, nil
 }
 
 // -- message_send --
@@ -469,10 +492,11 @@ type teamStatusRecentCompletion struct {
 }
 
 type teamStatusOutput struct {
-	Team              string                       `json:"team"`
-	Agents            []teamStatusAgentInfo        `json:"agents"`
-	Tasks             teamStatusTaskSummary        `json:"tasks"`
+	Team              string                      `json:"team"`
+	Agents            []teamStatusAgentInfo       `json:"agents"`
+	Tasks             teamStatusTaskSummary       `json:"tasks"`
 	RecentCompletions []teamStatusRecentCompletion `json:"recentCompletions"`
+	Notifications     []taskNotification          `json:"pending_notifications,omitempty"`
 }
 
 func teamStatusHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input teamStatusInput) (*mcpsdk.CallToolResult, teamStatusOutput, error) {
@@ -537,6 +561,7 @@ func teamStatusHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input t
 		Agents:            agents,
 		Tasks:             summary,
 		RecentCompletions: completions,
+		Notifications:     drainPendingNotifications(),
 	}, nil
 }
 
@@ -554,8 +579,9 @@ type teamStartAllResult struct {
 }
 
 type teamStartAllOutput struct {
-	Results    []teamStartAllResult `json:"results"`
-	MonitorCmd string               `json:"monitor_cmd" jsonschema:"Bash command to monitor agent notifications. Run this in a background Task to receive completion alerts."`
+	Results       []teamStartAllResult `json:"results"`
+	MonitorActive bool                 `json:"monitor_active"`
+	Notifications []taskNotification   `json:"pending_notifications,omitempty"`
 }
 
 func teamStartAllHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input teamStartAllInput) (*mcpsdk.CallToolResult, teamStartAllOutput, error) {
@@ -599,7 +625,14 @@ func teamStartAllHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input
 		results = append(results, r)
 	}
 
-	return nil, teamStartAllOutput{Results: results, MonitorCmd: notificationMonitorCmd}, nil
+	// Ensure background notification monitor is running
+	ensureMonitorRunning(mcpServer)
+
+	return nil, teamStartAllOutput{
+		Results:       results,
+		MonitorActive: monitorRunning.Load(),
+		Notifications: drainPendingNotifications(),
+	}, nil
 }
 
 // -- team_stop_all --
@@ -641,6 +674,8 @@ func teamStopAllHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input 
 
 // registerAgentTools registers all agent-related MCP tools on the given server.
 func registerAgentTools(server *mcpsdk.Server) {
+	mcpServer = server
+
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "team_create",
 		Description: "Create a new agent team workspace with directories for tasks, messages, and agent state",
@@ -663,12 +698,12 @@ func registerAgentTools(server *mcpsdk.Server) {
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "team_status",
-		Description: "Get a team dashboard with agent statuses, task summary, and recent completions",
+		Description: "Get a team dashboard with agent statuses, task summary, and recent completions. Also returns any pending agent notifications.",
 	}, teamStatusHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "team_start_all",
-		Description: "Start all agent daemons in a team, skipping already running agents. IMPORTANT: After starting, launch a background monitor to receive task completion notifications. Use the Task tool (run_in_background=true, subagent_type=Bash) with a bash script that polls ~/.codes/notifications/ for .json files. When a file appears, read and report its contents, then delete it. This enables real-time agent progress reporting to the current session.",
+		Description: "Start all agent daemons in a team, skipping already running agents. Notifications are piggybacked in subsequent agent tool responses via pending_notifications. RECOMMENDED: after starting, call team_watch and run the returned command in a background Task (run_in_background=true, subagent_type=Bash) for real-time notifications. Also call team_status periodically to check progress.",
 	}, teamStartAllHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
@@ -688,12 +723,12 @@ func registerAgentTools(server *mcpsdk.Server) {
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "agent_list",
-		Description: "List all agents in a team with their live status",
+		Description: "List all agents in a team with their live status. Also returns any pending agent notifications.",
 	}, agentListHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "agent_start",
-		Description: "Start an agent daemon that polls for and executes tasks. After starting, use a background task to monitor ~/.codes/notifications/ for completion notifications (e.g. Task tool with run_in_background + bash polling loop).",
+		Description: "Start an agent daemon that polls for and executes tasks. Notifications are piggybacked in subsequent agent tool responses via pending_notifications. RECOMMENDED: after starting, call team_watch and run the returned command in a background Task (run_in_background=true, subagent_type=Bash) for real-time notifications.",
 	}, agentStartHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
@@ -703,7 +738,7 @@ func registerAgentTools(server *mcpsdk.Server) {
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "task_create",
-		Description: "Create a new task in a team, optionally assigning it to an agent",
+		Description: "Create a new task in a team, optionally assigning it to an agent. Notifications are piggybacked in subsequent agent tool responses via pending_notifications. After creating tasks, periodically call team_status to check for completion. For real-time monitoring, call team_watch and run the returned command in a background Task.",
 	}, taskCreateHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
@@ -713,12 +748,12 @@ func registerAgentTools(server *mcpsdk.Server) {
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "task_list",
-		Description: "List tasks in a team with optional status and owner filters",
+		Description: "List tasks in a team with optional status and owner filters. Also returns any pending agent notifications.",
 	}, taskListHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "task_get",
-		Description: "Get full details of a specific task including result and session info",
+		Description: "Get full details of a specific task including result and session info. Also returns any pending agent notifications.",
 	}, taskGetHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
@@ -743,7 +778,7 @@ func registerAgentTools(server *mcpsdk.Server) {
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "team_watch",
-		Description: "Get a bash command that monitors agent task completion notifications. Run the returned command in a background Task (run_in_background=true, subagent_type=Bash) to receive real-time notifications when agents complete or fail tasks. The command polls ~/.codes/notifications/ for JSON files written by agent daemons.",
+		Description: "Get a bash command that monitors agent task completion notifications in real time. RECOMMENDED: after starting agents or creating tasks, call this tool and run the returned command using the Task tool (run_in_background=true, subagent_type=Bash). This provides real-time push notifications when agents complete or fail tasks, complementing the passive pending_notifications piggyback in other tool responses.",
 	}, teamWatchHandler)
 }
 
