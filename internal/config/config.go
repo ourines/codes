@@ -147,6 +147,25 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 
 var ConfigPath string
 
+// checkConfigPermissions verifies that the config file has secure permissions.
+// Returns an error if the file is readable by group or others (world-readable).
+func checkConfigPermissions(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil // File doesn't exist yet, that's okay
+	}
+
+	mode := info.Mode().Perm()
+
+	// Check if file is readable by group or others (should be 0600)
+	// 0044 = group read + other read
+	if mode&0044 != 0 {
+		return fmt.Errorf("config file has insecure permissions %o (should be 0600): %s", mode, path)
+	}
+
+	return nil
+}
+
 func init() {
 	// 首先检查项目根目录的配置文件
 	pwd, _ := os.Getwd()
@@ -161,6 +180,12 @@ func init() {
 }
 
 func LoadConfig() (*Config, error) {
+	// Check file permissions before reading
+	if err := checkConfigPermissions(ConfigPath); err != nil {
+		// Only warn, don't fail - to maintain backward compatibility
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
+
 	data, err := os.ReadFile(ConfigPath)
 	if err != nil {
 		return nil, err
@@ -182,7 +207,18 @@ func SaveConfig(config *Config) error {
 
 	dir := filepath.Dir(ConfigPath)
 	os.MkdirAll(dir, 0755)
-	return os.WriteFile(ConfigPath, data, 0644)
+
+	// Write with secure permissions (0600 = owner read/write only)
+	if err := os.WriteFile(ConfigPath, data, 0600); err != nil {
+		return err
+	}
+
+	// Verify permissions were set correctly
+	if err := checkConfigPermissions(ConfigPath); err != nil {
+		return fmt.Errorf("config saved but permissions are insecure: %w", err)
+	}
+
+	return nil
 }
 
 func TestAPIConfig(config APIConfig) bool {
