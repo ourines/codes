@@ -46,10 +46,6 @@ func (m Model) updateWorkflows(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "q", "ctrl+c":
 		return m, tea.Quit
-	case "tab":
-		m.state = viewProjects
-		m.focus = focusLeft
-		return m, nil
 	case "j", "down":
 		if m.workflowCursor < len(m.workflowList)-1 {
 			m.workflowCursor++
