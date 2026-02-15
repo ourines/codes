@@ -126,6 +126,16 @@ var VersionCmd = &cobra.Command{
 	},
 }
 
+// DoctorCmd represents the doctor command
+var DoctorCmd = &cobra.Command{
+	Use:   "doctor",
+	Short: "Run system diagnostics",
+	Long:  "Run comprehensive system diagnostics to check Claude CLI installation, configuration, API connectivity, and agent status",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunDoctor()
+	},
+}
+
 // RunCmd represents the default run command
 var RunCmd = &cobra.Command{
 	Use:  "codes",
