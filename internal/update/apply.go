@@ -1,6 +1,9 @@
 package update
 
 import (
+	"archive/tar"
+	"archive/zip"
+	"compress/gzip"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,20 +13,28 @@ import (
 	"time"
 )
 
-// platformBinaryName returns the expected binary name for the current platform.
-func platformBinaryName() string {
-	name := fmt.Sprintf("codes-%s-%s", runtime.GOOS, runtime.GOARCH)
+// platformArchiveName returns the expected release archive name for the current platform.
+func platformArchiveName(tag string) string {
+	ext := ".tar.gz"
 	if runtime.GOOS == "windows" {
-		name += ".exe"
+		ext = ".zip"
 	}
-	return name
+	return fmt.Sprintf("codes-%s-%s-%s%s", tag, runtime.GOOS, runtime.GOARCH, ext)
+}
+
+// platformBinaryName returns the binary name inside the archive.
+func platformBinaryName() string {
+	if runtime.GOOS == "windows" {
+		return "codes.exe"
+	}
+	return "codes"
 }
 
 // downloadURL returns the GitHub release download URL for the given tag.
 func downloadURL(tag string) string {
 	return fmt.Sprintf(
 		"https://github.com/%s/%s/releases/download/%s/%s",
-		repoOwner, repoName, tag, platformBinaryName(),
+		repoOwner, repoName, tag, platformArchiveName(tag),
 	)
 }
 
@@ -36,8 +47,8 @@ func stagingDirPath() (string, error) {
 	return filepath.Join(home, ".codes", "update"), nil
 }
 
-// DownloadRelease downloads the binary for the given release to destDir.
-// Returns the path of the downloaded file.
+// DownloadRelease downloads and extracts the binary for the given release.
+// Returns the path of the extracted binary.
 func DownloadRelease(release *ReleaseInfo, destDir string) (string, error) {
 	url := downloadURL(release.TagName)
 	client := &http.Client{Timeout: 120 * time.Second}
@@ -51,31 +62,103 @@ func DownloadRelease(release *ReleaseInfo, destDir string) (string, error) {
 		return "", fmt.Errorf("download returned HTTP %d", resp.StatusCode)
 	}
 
-	destPath := filepath.Join(destDir, platformBinaryName())
-	f, err := os.CreateTemp(destDir, "codes-update-*")
+	// Save archive to temp file
+	archivePath := filepath.Join(destDir, platformArchiveName(release.TagName))
+	f, err := os.Create(archivePath)
 	if err != nil {
-		return "", fmt.Errorf("create temp file: %w", err)
+		return "", fmt.Errorf("create archive file: %w", err)
 	}
-	tmpPath := f.Name()
-
 	if _, err := io.Copy(f, resp.Body); err != nil {
 		f.Close()
-		os.Remove(tmpPath)
+		os.Remove(archivePath)
 		return "", fmt.Errorf("write failed: %w", err)
 	}
 	f.Close()
 
-	if err := os.Chmod(tmpPath, 0755); err != nil {
-		os.Remove(tmpPath)
-		return "", err
+	// Extract binary from archive
+	binaryName := platformBinaryName()
+	destPath := filepath.Join(destDir, binaryName)
+
+	if runtime.GOOS == "windows" {
+		err = extractFromZip(archivePath, binaryName, destPath)
+	} else {
+		err = extractFromTarGz(archivePath, binaryName, destPath)
+	}
+	os.Remove(archivePath)
+	if err != nil {
+		return "", fmt.Errorf("extract failed: %w", err)
 	}
 
-	if err := os.Rename(tmpPath, destPath); err != nil {
-		os.Remove(tmpPath)
+	if err := os.Chmod(destPath, 0755); err != nil {
+		os.Remove(destPath)
 		return "", err
 	}
 
 	return destPath, nil
+}
+
+// extractFromTarGz extracts a single file from a .tar.gz archive.
+func extractFromTarGz(archivePath, targetName, destPath string) error {
+	f, err := os.Open(archivePath)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		return err
+	}
+	defer gz.Close()
+
+	tr := tar.NewReader(gz)
+	for {
+		hdr, err := tr.Next()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			return err
+		}
+		if filepath.Base(hdr.Name) == targetName && hdr.Typeflag == tar.TypeReg {
+			out, err := os.Create(destPath)
+			if err != nil {
+				return err
+			}
+			defer out.Close()
+			_, err = io.Copy(out, tr)
+			return err
+		}
+	}
+	return fmt.Errorf("binary %q not found in archive", targetName)
+}
+
+// extractFromZip extracts a single file from a .zip archive.
+func extractFromZip(archivePath, targetName, destPath string) error {
+	r, err := zip.OpenReader(archivePath)
+	if err != nil {
+		return err
+	}
+	defer r.Close()
+
+	for _, zf := range r.File {
+		if filepath.Base(zf.Name) == targetName {
+			rc, err := zf.Open()
+			if err != nil {
+				return err
+			}
+			defer rc.Close()
+
+			out, err := os.Create(destPath)
+			if err != nil {
+				return err
+			}
+			defer out.Close()
+			_, err = io.Copy(out, rc)
+			return err
+		}
+	}
+	return fmt.Errorf("binary %q not found in archive", targetName)
 }
 
 // ReplaceSelf replaces the currently running binary with newBinaryPath.
