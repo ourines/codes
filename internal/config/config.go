@@ -19,11 +19,20 @@ type Config struct {
 	Projects        map[string]ProjectEntry `json:"projects,omitempty"`   // 项目别名 -> 项目条目
 	LastWorkDir     string            `json:"lastWorkDir,omitempty"`     // 上次工作目录
 	DefaultBehavior string            `json:"defaultBehavior,omitempty"` // 默认启动行为: "current", "last", "home"
-	Terminal        string            `json:"terminal,omitempty"`        // 终端模拟器: "terminal", "iterm", "warp", 或自定义命令
+	Terminal        string            `json:"terminal,omitempty"`        // 终端模拟器: "terminal", "iterm", "warp", ��自定义命令
 	Remotes         []RemoteHost      `json:"remotes,omitempty"`         // 远程 SSH 主机
 	ProjectsDir     string            `json:"projects_dir,omitempty"`    // git clone 默认目标目录
 	AutoUpdate      string            `json:"auto_update,omitempty"`     // 自动更新模式: "notify", "silent", "off"
 	Editor          string            `json:"editor,omitempty"`          // 编辑器命令: "code", "cursor", "zed", etc.
+	Webhooks        []WebhookConfig   `json:"webhooks,omitempty"`        // Webhook 通知配置
+}
+
+// WebhookConfig represents a webhook notification endpoint.
+type WebhookConfig struct {
+	Name   string   `json:"name"`             // 配置名称（可选，用于管理多个webhook）
+	URL    string   `json:"url"`              // Webhook URL
+	Format string   `json:"format,omitempty"` // "slack" or "feishu" (默认 "slack")
+	Events []string `json:"events,omitempty"` // 事件过滤 ["task_completed", "task_failed"] (空表示全部)
 }
 
 // RemoteHost represents a remote SSH host configuration.
@@ -814,4 +823,69 @@ func ListRemotes() ([]RemoteHost, error) {
 		return nil, err
 	}
 	return cfg.Remotes, nil
+}
+
+// AddWebhook adds a webhook configuration.
+func AddWebhook(webhook WebhookConfig) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	// Check for duplicate name (if name is provided)
+	if webhook.Name != "" {
+		for _, w := range cfg.Webhooks {
+			if w.Name == webhook.Name {
+				return fmt.Errorf("webhook %q already exists", webhook.Name)
+			}
+		}
+	}
+
+	// Default format to "slack" if not specified
+	if webhook.Format == "" {
+		webhook.Format = "slack"
+	}
+
+	cfg.Webhooks = append(cfg.Webhooks, webhook)
+	return SaveConfig(cfg)
+}
+
+// RemoveWebhook removes a webhook by name or URL.
+func RemoveWebhook(identifier string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	for i, w := range cfg.Webhooks {
+		if w.Name == identifier || w.URL == identifier {
+			cfg.Webhooks = append(cfg.Webhooks[:i], cfg.Webhooks[i+1:]...)
+			return SaveConfig(cfg)
+		}
+	}
+	return fmt.Errorf("webhook %q not found", identifier)
+}
+
+// GetWebhook returns a webhook by name or URL.
+func GetWebhook(identifier string) (*WebhookConfig, bool) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, false
+	}
+
+	for _, w := range cfg.Webhooks {
+		if w.Name == identifier || w.URL == identifier {
+			return &w, true
+		}
+	}
+	return nil, false
+}
+
+// ListWebhooks returns all configured webhooks.
+func ListWebhooks() ([]WebhookConfig, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Webhooks, nil
 }
