@@ -197,8 +197,12 @@ func init() {
 func LoadConfig() (*Config, error) {
 	// Check file permissions before reading
 	if err := checkConfigPermissions(ConfigPath); err != nil {
-		// Only warn, don't fail - to maintain backward compatibility
-		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+		// Auto-fix insecure permissions instead of just warning
+		if runtime.GOOS != "windows" {
+			if chmodErr := os.Chmod(ConfigPath, 0600); chmodErr != nil {
+				fmt.Fprintf(os.Stderr, "Warning: %v (auto-fix failed: %v)\n", err, chmodErr)
+			}
+		}
 	}
 
 	data, err := os.ReadFile(ConfigPath)
@@ -228,9 +232,11 @@ func SaveConfig(config *Config) error {
 		return err
 	}
 
-	// Verify permissions were set correctly
-	if err := checkConfigPermissions(ConfigPath); err != nil {
-		return fmt.Errorf("config saved but permissions are insecure: %w", err)
+	// Explicitly set permissions (WriteFile only applies mode on file creation, not on existing files)
+	if runtime.GOOS != "windows" {
+		if err := os.Chmod(ConfigPath, 0600); err != nil {
+			return fmt.Errorf("failed to set config file permissions: %w", err)
+		}
 	}
 
 	return nil
