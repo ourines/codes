@@ -197,8 +197,20 @@ func (d *Daemon) processMessages(ctx context.Context, state *AgentState) {
 		if msg.Content == "__stop__" {
 			continue
 		}
+		// Skip messages from self (prevents broadcast echo loops)
+		if msg.From == d.AgentName {
+			MarkRead(d.TeamName, msg.ID)
+			continue
+		}
 		// Skip auto-reports (don't respond to task_completed/task_failed notifications)
 		if msg.Type == MsgTaskCompleted || msg.Type == MsgTaskFailed || msg.Type == MsgSystem {
+			MarkRead(d.TeamName, msg.ID)
+			continue
+		}
+		// Skip broadcast messages — only respond to direct messages
+		// Broadcasts are informational (e.g. "agent online"); responding creates message storms.
+		if msg.To == "" {
+			d.logger.Printf("broadcast from %s: %s (read-only)", msg.From, truncate(msg.Content, 80))
 			MarkRead(d.TeamName, msg.ID)
 			continue
 		}
