@@ -216,7 +216,7 @@ func renderProjectDetail(info config.ProjectInfo, width, height int, mgr *sessio
 	if focused {
 		b.WriteString(formHintStyle.Render("  ↑↓: select  Enter: open  k: kill  ←: back"))
 	} else {
-		b.WriteString(formHintStyle.Render("  →: select session  Enter: new  k: kill"))
+		b.WriteString(formHintStyle.Render("  →: select session  Enter: new  l: links  k: kill"))
 	}
 
 	// Use highlighted border when focused
