@@ -26,6 +26,7 @@ func init() {
 	rootCmd.AddCommand(commands.InitCmd)
 	rootCmd.AddCommand(commands.UpdateCmd)
 	rootCmd.AddCommand(commands.VersionCmd)
+	rootCmd.AddCommand(commands.DoctorCmd)
 	rootCmd.AddCommand(commands.StartCmd)
 	rootCmd.AddCommand(commands.ProfileCmd)
 	rootCmd.AddCommand(commands.ProjectCmd)
