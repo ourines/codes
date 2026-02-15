@@ -44,3 +44,28 @@ type Usage struct {
 	CacheCreateTokens int64 `json:"cache_creation_input_tokens"`
 	CacheReadTokens   int64 `json:"cache_read_input_tokens"`
 }
+
+// Summary represents aggregated statistics across a time period.
+type Summary struct {
+	TotalCost      float64       `json:"totalCost"`
+	TotalSessions  int           `json:"totalSessions"`
+	InputTokens    int64         `json:"inputTokens"`
+	OutputTokens   int64         `json:"outputTokens"`
+	CacheCreate    int64         `json:"cacheCreateTokens"`
+	CacheRead      int64         `json:"cacheReadTokens"`
+	TopProjects    []ProjectCost `json:"topProjects"`
+	TopModels      []ModelCost   `json:"topModels"`
+	DailyBreakdown []DailyStat   `json:"dailyBreakdown"`
+}
+
+// ProjectCost represents cost aggregation for a single project.
+type ProjectCost struct {
+	Project string  `json:"project"`
+	Cost    float64 `json:"cost"`
+}
+
+// ModelCost represents cost aggregation for a single model.
+type ModelCost struct {
+	Model string  `json:"model"`
+	Cost  float64 `json:"cost"`
+}

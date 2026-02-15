@@ -100,3 +100,89 @@ func TotalSessions(stats []DailyStat) int {
 	}
 	return total
 }
+
+// TotalTokens sums input and output tokens across a slice of daily stats.
+func TotalTokens(stats []DailyStat) (input, output int64) {
+	for _, s := range stats {
+		input += s.InputTokens
+		output += s.OutputTokens
+	}
+	return
+}
+
+// ProjectBreakdown aggregates costs by project across all daily stats.
+// Returns a map of project name to total cost, sorted by cost descending.
+func ProjectBreakdown(stats []DailyStat) []ProjectCost {
+	totals := make(map[string]float64)
+	for _, s := range stats {
+		for proj, cost := range s.ByProject {
+			totals[proj] += cost
+		}
+	}
+
+	result := make([]ProjectCost, 0, len(totals))
+	for proj, cost := range totals {
+		result = append(result, ProjectCost{Project: proj, Cost: cost})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Cost > result[j].Cost
+	})
+
+	return result
+}
+
+// ModelBreakdown aggregates costs by model across all daily stats.
+// Returns a map of model name to total cost, sorted by cost descending.
+func ModelBreakdown(stats []DailyStat) []ModelCost {
+	totals := make(map[string]float64)
+	for _, s := range stats {
+		for model, cost := range s.ByModel {
+			totals[model] += cost
+		}
+	}
+
+	result := make([]ModelCost, 0, len(totals))
+	for model, cost := range totals {
+		result = append(result, ModelCost{Model: model, Cost: cost})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Cost > result[j].Cost
+	})
+
+	return result
+}
+
+// GenerateSummary creates a comprehensive summary from session records.
+func GenerateSummary(records []SessionRecord, from, to time.Time) Summary {
+	dailyStats := Aggregate(records, from, to)
+
+	// Calculate total cache tokens from records
+	var cacheCreate, cacheRead int64
+	for _, r := range records {
+		// Apply time filter
+		if !from.IsZero() && r.StartTime.Before(from) {
+			continue
+		}
+		if !to.IsZero() && r.StartTime.After(to) {
+			continue
+		}
+		cacheCreate += r.CacheCreateTokens
+		cacheRead += r.CacheReadTokens
+	}
+
+	input, output := TotalTokens(dailyStats)
+
+	return Summary{
+		TotalCost:      TotalCost(dailyStats),
+		TotalSessions:  TotalSessions(dailyStats),
+		InputTokens:    input,
+		OutputTokens:   output,
+		CacheCreate:    cacheCreate,
+		CacheRead:      cacheRead,
+		TopProjects:    ProjectBreakdown(dailyStats),
+		TopModels:      ModelBreakdown(dailyStats),
+		DailyBreakdown: dailyStats,
+	}
+}

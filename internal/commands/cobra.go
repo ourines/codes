@@ -381,6 +381,12 @@ func init() {
 	RemoteCmd.AddCommand(RemoteSyncCmd)
 	RemoteCmd.AddCommand(RemoteSetupCmd)
 	RemoteCmd.AddCommand(RemoteSSHCmd)
+
+	// Stats sub-commands
+	StatsCmd.AddCommand(StatsSummaryCmd)
+	StatsCmd.AddCommand(StatsProjectCmd)
+	StatsCmd.AddCommand(StatsModelCmd)
+	StatsCmd.AddCommand(StatsRefreshCmd)
 }
 
 // CompletionCmd generates shell completion scripts
@@ -533,6 +539,64 @@ var RemoteSSHCmd = &cobra.Command{
 			project = args[1]
 		}
 		RunRemoteSSH(args[0], project)
+	},
+}
+
+// StatsCmd represents the stats parent command
+var StatsCmd = &cobra.Command{
+	Use:     "stats",
+	Aliases: []string{"st"},
+	Short:   "View Claude API usage statistics",
+	Long:    "View cost and usage statistics from Claude sessions",
+}
+
+// StatsSummaryCmd shows overall statistics
+var StatsSummaryCmd = &cobra.Command{
+	Use:   "summary [period]",
+	Short: "Show cost summary",
+	Long:  "Show aggregated cost and token usage summary. Period: today, week, month, all (default: week)",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		period := "week"
+		if len(args) > 0 {
+			period = args[0]
+		}
+		RunStatsSummary(period)
+	},
+}
+
+// StatsProjectCmd shows per-project breakdown
+var StatsProjectCmd = &cobra.Command{
+	Use:   "project [name]",
+	Short: "Show project costs",
+	Long:  "Show cost breakdown by project. If name is provided, show only that project.",
+	Args:  cobra.MaximumNArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		project := ""
+		if len(args) > 0 {
+			project = args[0]
+		}
+		RunStatsProject(project)
+	},
+}
+
+// StatsModelCmd shows per-model breakdown
+var StatsModelCmd = &cobra.Command{
+	Use:   "model",
+	Short: "Show model costs",
+	Long:  "Show cost breakdown by Claude model",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunStatsModel()
+	},
+}
+
+// StatsRefreshCmd forces a cache refresh
+var StatsRefreshCmd = &cobra.Command{
+	Use:   "refresh",
+	Short: "Refresh stats cache",
+	Long:  "Force a full rescan of all Claude session files and rebuild the stats cache",
+	Run: func(cmd *cobra.Command, args []string) {
+		RunStatsRefresh()
 	},
 }
 

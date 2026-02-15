@@ -38,7 +38,8 @@ The root command dynamically selects behavior:
 | `internal/session` | Terminal session lifecycle: spawn, track via PID files, kill |
 | `internal/remote` | SSH/SCP operations, remote codes installation, profile sync |
 | `internal/agent` | Agent team management: daemon lifecycle, task execution, message passing, Claude subprocess orchestration |
-| `internal/mcp` | MCP server exposing 27 tools over stdio transport (10 config + 17 agent tools) |
+| `internal/stats` | Cost tracking: JSONL session parsing, token aggregation, caching, time-range filtering |
+| `internal/mcp` | MCP server exposing 31 tools over stdio transport (10 config + 17 agent + 4 stats tools) |
 | `internal/commands` | Cobra command definitions (`cobra.go`) + implementations (`commands.go`) |
 | `internal/output` | JSON mode wrapper (`output.JSONMode` flag) |
 | `internal/ui` | Styled CLI text output helpers |
@@ -66,6 +67,11 @@ codes
 │   ├── task                 # create/list/get/cancel
 │   ├── message              # send/list
 │   └── status <team>        # Team dashboard
+├── stats (alias: st)        # View Claude API usage statistics
+│   ├── summary [period]     # Cost summary (today/week/month/all)
+│   ├─�� project [name]       # Cost breakdown by project
+│   ├── model                # Cost breakdown by model
+│   └── refresh              # Force cache refresh
 ├── serve                    # MCP server mode
 └── completion [shell]       # Hidden, still functional
 ```
@@ -103,9 +109,11 @@ PID tracking via `/tmp/codes-session-<id>.pid`. `RefreshStatus()` polls process 
 
 ### MCP Server (`internal/mcp`)
 
-27 tools registered via `mcpsdk.AddTool()` over stdio transport:
+31 tools registered via `mcpsdk.AddTool()` over stdio transport:
 
 **Config tools (10):** `list_projects`, `add_project`, `remove_project`, `list_profiles`, `switch_profile`, `get_project_info`, `list_remotes`, `add_remote`, `remove_remote`, `sync_remote`
+
+**Stats tools (4):** `stats_summary`, `stats_by_project`, `stats_by_model`, `stats_refresh`
 
 **Agent tools (17):** `team_create`, `team_delete`, `team_list`, `team_get`, `team_status`, `team_start_all`, `team_stop_all`, `agent_add`, `agent_remove`, `agent_list`, `agent_start`, `agent_stop`, `task_create`, `task_update`, `task_list`, `task_get`, `message_send`, `message_list`, `message_mark_read`
 
@@ -168,6 +176,41 @@ Atomic writes via temp file + rename. File locks prevent race conditions during 
 - **Agent daemon polling**: 3-second poll interval balances responsiveness vs CPU usage. Daemons detach from parent process to survive MCP server restarts.
 - **Agent task claiming**: Auto-claim uses read-modify-write pattern with error handling for race conditions. Failed claims are silently skipped (another agent won).
 - **Agent file locking**: Future enhancement for coordinated task claims across distributed agents (current impl relies on filesystem atomic renames).
+- **Stats caching**: Session data cached in `~/.codes/stats.json` with auto-refresh every 5 minutes. Full rescan via `codes stats refresh` or `stats_refresh` MCP tool.
+- **Cost calculation**: Token prices hardcoded in `internal/stats/pricing.go`. Uses Claude API 2024 pricing: input/output/cache-create/cache-read tokens.
+
+### Stats System (`internal/stats/`)
+
+The stats system tracks Claude API usage costs by parsing session JSONL files.
+
+**Data Flow:**
+
+1. **Session files** (`~/.claude/projects/<path>/<session-id>.jsonl`) — Claude writes JSONL with `assistant` messages containing `usage` fields
+2. **Scanner** (`scanner.go`) — Parses JSONL files, extracts tokens and model info, resolves project aliases from `codes` config
+3. **Cache** (`cache.go`) — Stores parsed data in `~/.codes/stats.json` with 5-min refresh interval
+4. **Aggregator** (`aggregator.go`) — Groups sessions by day/project/model, supports time-range filtering
+5. **Pricing** (`pricing.go`) — Converts token counts to USD costs using hardcoded API pricing
+
+**CLI Commands:**
+
+```bash
+codes stats summary [period]  # Overview (today/week/month/all)
+codes stats project [name]     # Cost by project
+codes stats model              # Cost by model
+codes stats refresh            # Force cache rebuild
+```
+
+**MCP Tools:**
+
+- `stats_summary` — Get cost summary for time period
+- `stats_by_project` — Cost breakdown by project
+- `stats_by_model` — Cost breakdown by model
+- `stats_refresh` — Force rescan and cache rebuild
+
+**Storage:**
+
+- Cache: `~/.codes/stats.json` (auto-created, auto-refreshed)
+- Source: `~/.claude/projects/<dir>/<session>.jsonl` (written by Claude CLI)
 
 ## E2E Testing Policy
 

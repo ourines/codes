@@ -189,6 +189,7 @@ func TestLookupPricing(t *testing.T) {
 		{"claude-opus-4-6", 15.0},
 		{"claude-opus-4-20250115", 15.0},
 		{"claude-sonnet-4-5-20250929", 3.0},
+		{"claude-sonnet-4-20250514", 3.0},
 		{"claude-haiku-3-5-20241022", 0.80},
 		{"totally-unknown", 3.0}, // default = sonnet
 	}
@@ -197,5 +198,141 @@ func TestLookupPricing(t *testing.T) {
 		if math.Abs(p.InputPerMillion-tt.input) > 0.001 {
 			t.Errorf("lookupPricing(%q).InputPerMillion = %f, want %f", tt.model, p.InputPerMillion, tt.input)
 		}
+	}
+}
+
+func TestTotalTokens(t *testing.T) {
+	stats := []DailyStat{
+		{InputTokens: 100_000, OutputTokens: 50_000},
+		{InputTokens: 200_000, OutputTokens: 75_000},
+	}
+	input, output := TotalTokens(stats)
+	if input != 300_000 {
+		t.Errorf("TotalTokens input = %d, want 300000", input)
+	}
+	if output != 125_000 {
+		t.Errorf("TotalTokens output = %d, want 125000", output)
+	}
+}
+
+func TestProjectBreakdown(t *testing.T) {
+	stats := []DailyStat{
+		{
+			ByProject: map[string]float64{
+				"codes":  5.00,
+				"conduit": 3.00,
+			},
+		},
+		{
+			ByProject: map[string]float64{
+				"codes":  2.00,
+				"other": 1.00,
+			},
+		},
+	}
+
+	breakdown := ProjectBreakdown(stats)
+	if len(breakdown) != 3 {
+		t.Fatalf("expected 3 projects, got %d", len(breakdown))
+	}
+
+	// Should be sorted by cost descending
+	if breakdown[0].Project != "codes" || math.Abs(breakdown[0].Cost-7.00) > 0.001 {
+		t.Errorf("top project = %s ($%.2f), want codes ($7.00)", breakdown[0].Project, breakdown[0].Cost)
+	}
+	if breakdown[1].Project != "conduit" || math.Abs(breakdown[1].Cost-3.00) > 0.001 {
+		t.Errorf("2nd project = %s ($%.2f), want conduit ($3.00)", breakdown[1].Project, breakdown[1].Cost)
+	}
+}
+
+func TestModelBreakdown(t *testing.T) {
+	stats := []DailyStat{
+		{
+			ByModel: map[string]float64{
+				"claude-opus-4-6":   10.00,
+				"claude-sonnet-4-5": 2.00,
+			},
+		},
+		{
+			ByModel: map[string]float64{
+				"claude-sonnet-4-5": 1.00,
+				"claude-haiku-3-5":  0.50,
+			},
+		},
+	}
+
+	breakdown := ModelBreakdown(stats)
+	if len(breakdown) != 3 {
+		t.Fatalf("expected 3 models, got %d", len(breakdown))
+	}
+
+	// Should be sorted by cost descending
+	if breakdown[0].Model != "claude-opus-4-6" || math.Abs(breakdown[0].Cost-10.00) > 0.001 {
+		t.Errorf("top model = %s ($%.2f), want claude-opus-4-6 ($10.00)", breakdown[0].Model, breakdown[0].Cost)
+	}
+}
+
+func TestGenerateSummary(t *testing.T) {
+	records := []SessionRecord{
+		{
+			SessionID:         "s1",
+			Project:           "codes",
+			Model:             "claude-sonnet-4-5",
+			StartTime:         time.Date(2026, 2, 15, 10, 0, 0, 0, time.UTC),
+			CostUSD:           3.00,
+			InputTokens:       100_000,
+			OutputTokens:      50_000,
+			CacheCreateTokens: 10_000,
+			CacheReadTokens:   20_000,
+		},
+		{
+			SessionID:         "s2",
+			Project:           "conduit",
+			Model:             "claude-opus-4-6",
+			StartTime:         time.Date(2026, 2, 15, 14, 0, 0, 0, time.UTC),
+			CostUSD:           5.00,
+			InputTokens:       200_000,
+			OutputTokens:      100_000,
+			CacheCreateTokens: 15_000,
+			CacheReadTokens:   25_000,
+		},
+	}
+
+	summary := GenerateSummary(records, time.Time{}, time.Time{})
+
+	// Check totals
+	if math.Abs(summary.TotalCost-8.00) > 0.001 {
+		t.Errorf("TotalCost = %.2f, want 8.00", summary.TotalCost)
+	}
+	if summary.TotalSessions != 2 {
+		t.Errorf("TotalSessions = %d, want 2", summary.TotalSessions)
+	}
+	if summary.InputTokens != 300_000 {
+		t.Errorf("InputTokens = %d, want 300000", summary.InputTokens)
+	}
+	if summary.OutputTokens != 150_000 {
+		t.Errorf("OutputTokens = %d, want 150000", summary.OutputTokens)
+	}
+	if summary.CacheCreate != 25_000 {
+		t.Errorf("CacheCreate = %d, want 25000", summary.CacheCreate)
+	}
+	if summary.CacheRead != 45_000 {
+		t.Errorf("CacheRead = %d, want 45000", summary.CacheRead)
+	}
+
+	// Check top project (opus should be first due to higher cost)
+	if len(summary.TopProjects) != 2 {
+		t.Fatalf("expected 2 projects, got %d", len(summary.TopProjects))
+	}
+	if summary.TopProjects[0].Project != "conduit" || math.Abs(summary.TopProjects[0].Cost-5.00) > 0.001 {
+		t.Errorf("top project = %s ($%.2f), want conduit ($5.00)", summary.TopProjects[0].Project, summary.TopProjects[0].Cost)
+	}
+
+	// Check daily breakdown
+	if len(summary.DailyBreakdown) != 1 {
+		t.Fatalf("expected 1 daily stat, got %d", len(summary.DailyBreakdown))
+	}
+	if summary.DailyBreakdown[0].Date != "2026-02-15" {
+		t.Errorf("daily date = %s, want 2026-02-15", summary.DailyBreakdown[0].Date)
 	}
 }

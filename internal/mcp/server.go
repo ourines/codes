@@ -73,5 +73,8 @@ func RunServer() error {
 	// Workflow tools
 	registerWorkflowTools(server)
 
+	// Stats tools
+	registerStatsTools(server)
+
 	return server.Run(context.Background(), &mcpsdk.StdioTransport{})
 }
