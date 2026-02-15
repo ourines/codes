@@ -85,6 +85,16 @@ func (m Model) updateStats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.statsRange = "all"
 		m.statsLoading = true
 		return m, loadStatsCmd("all")
+	case "f":
+		switch m.statsBreakdown {
+		case "", "both":
+			m.statsBreakdown = "project"
+		case "project":
+			m.statsBreakdown = "model"
+		case "model":
+			m.statsBreakdown = "both"
+		}
+		return m, nil
 	case "r":
 		m.statsLoading = true
 		return m, func() tea.Msg {
@@ -108,13 +118,17 @@ func (m Model) updateStats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 // renderStatsView renders the full stats panel.
-func renderStatsView(daily []stats.DailyStat, records []stats.SessionRecord, timeRange string, loading bool, width, height int) string {
+func renderStatsView(daily []stats.DailyStat, records []stats.SessionRecord, timeRange, breakdown string, loading bool, width, height int) string {
 	if loading {
 		return lipgloss.NewStyle().
 			Width(width).
 			Height(height).
 			Align(lipgloss.Center, lipgloss.Center).
 			Render(statsDimStyle.Render("Loading stats..."))
+	}
+
+	if breakdown == "" {
+		breakdown = "both"
 	}
 
 	var b strings.Builder
@@ -149,30 +163,31 @@ func renderStatsView(daily []stats.DailyStat, records []stats.SessionRecord, tim
 	b.WriteString(statsDimStyle.Render(tokens))
 	b.WriteString("\n\n")
 
+	barWidth := min(width-40, 30)
+	if barWidth < 10 {
+		barWidth = 10
+	}
+
 	// By Project breakdown
-	projectCosts := aggregateByProject(daily)
-	if len(projectCosts) > 0 {
-		b.WriteString(statsHeaderStyle.Render("  By Project:"))
-		b.WriteString("\n")
-		barWidth := min(width-40, 30)
-		if barWidth < 10 {
-			barWidth = 10
+	if breakdown == "both" || breakdown == "project" {
+		projectCosts := aggregateByProject(daily)
+		if len(projectCosts) > 0 {
+			b.WriteString(statsHeaderStyle.Render("  By Project:"))
+			b.WriteString("\n")
+			renderBreakdown(&b, projectCosts, totalCost, barWidth, 8)
+			b.WriteString("\n")
 		}
-		renderBreakdown(&b, projectCosts, totalCost, barWidth, 8)
-		b.WriteString("\n")
 	}
 
 	// By Model breakdown
-	modelCosts := aggregateByModel(daily)
-	if len(modelCosts) > 0 {
-		b.WriteString(statsHeaderStyle.Render("  By Model:"))
-		b.WriteString("\n")
-		barWidth := min(width-40, 30)
-		if barWidth < 10 {
-			barWidth = 10
+	if breakdown == "both" || breakdown == "model" {
+		modelCosts := aggregateByModel(daily)
+		if len(modelCosts) > 0 {
+			b.WriteString(statsHeaderStyle.Render("  By Model:"))
+			b.WriteString("\n")
+			renderBreakdown(&b, modelCosts, totalCost, barWidth, 8)
+			b.WriteString("\n")
 		}
-		renderBreakdown(&b, modelCosts, totalCost, barWidth, 8)
-		b.WriteString("\n")
 	}
 
 	// Daily trend chart
@@ -181,6 +196,12 @@ func renderStatsView(daily []stats.DailyStat, records []stats.SessionRecord, tim
 		b.WriteString("\n")
 		renderDailyChart(&b, daily, width-6, 6)
 	}
+
+	// Help footer
+	b.WriteString("\n")
+	breakdownLabel := map[string]string{"both": "all", "project": "project", "model": "model"}[breakdown]
+	help := fmt.Sprintf("  w:week  m:month  a:all  f:group(%s)  r:refresh", breakdownLabel)
+	b.WriteString(statsDimStyle.Render(help))
 
 	return b.String()
 }
@@ -295,18 +316,30 @@ func renderDailyChart(b *strings.Builder, daily []stats.DailyStat, width, maxHei
 	}
 
 	// Calculate bar width
-	barSpacing := 2 // each bar + gap
-	maxBars := (width - 4) / barSpacing
+	yLabelWidth := len(formatCost(maxCost)) + 1 // e.g. "$12.34 "
+	barSpacing := 2                              // each bar + gap
+	maxBars := (width - yLabelWidth - 2) / barSpacing
 	startIdx := 0
 	if len(daily) > maxBars {
 		startIdx = len(daily) - maxBars
 	}
 	visibleDays := daily[startIdx:]
 
-	// Build vertical bars (top to bottom)
+	// Build vertical bars (top to bottom) with Y-axis labels
 	for row := maxHeight; row >= 1; row-- {
 		threshold := float64(row) / float64(maxHeight)
-		line := "  "
+
+		// Y-axis label: show at top, middle, bottom
+		label := strings.Repeat(" ", yLabelWidth)
+		if row == maxHeight {
+			label = fmt.Sprintf("%*s ", yLabelWidth-1, formatCost(maxCost))
+		} else if row == maxHeight/2 {
+			label = fmt.Sprintf("%*s ", yLabelWidth-1, formatCost(maxCost/2))
+		} else if row == 1 {
+			label = fmt.Sprintf("%*s ", yLabelWidth-1, "$0")
+		}
+		line := statsDimStyle.Render(label)
+
 		for _, d := range visibleDays {
 			ratio := d.TotalCost / maxCost
 			if ratio >= threshold {
@@ -319,20 +352,17 @@ func renderDailyChart(b *strings.Builder, daily []stats.DailyStat, width, maxHei
 		b.WriteString("\n")
 	}
 
-	// Date labels (just show first and last)
+	// Date labels (first, middle, last)
 	if len(visibleDays) > 0 {
-		first := visibleDays[0].Date
-		last := visibleDays[len(visibleDays)-1].Date
-		// Parse and format short
-		firstShort := shortDate(first)
-		lastShort := shortDate(last)
+		first := shortDate(visibleDays[0].Date)
+		last := shortDate(visibleDays[len(visibleDays)-1].Date)
 
 		labelWidth := len(visibleDays) * barSpacing
-		gap := labelWidth - len(firstShort) - len(lastShort)
+		gap := labelWidth - len(first) - len(last)
 		if gap < 1 {
 			gap = 1
 		}
-		b.WriteString("  " + statsDimStyle.Render(firstShort+strings.Repeat(" ", gap)+lastShort))
+		b.WriteString(strings.Repeat(" ", yLabelWidth) + statsDimStyle.Render(first+strings.Repeat(" ", gap)+last))
 		b.WriteString("\n")
 	}
 }

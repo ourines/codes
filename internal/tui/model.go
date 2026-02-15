@@ -69,10 +69,11 @@ type Model struct {
 	version       string // 当前版本
 	latestVersion string // 缓存的最新版本（空 = 未知或已是最新）
 	// Stats tab
-	statsDaily   []stats.DailyStat
-	statsRecords []stats.SessionRecord
-	statsRange   string // "week" | "month" | "all"
-	statsLoading bool
+	statsDaily     []stats.DailyStat
+	statsRecords   []stats.SessionRecord
+	statsRange     string // "week" | "month" | "all"
+	statsBreakdown string // "both" | "project" | "model"
+	statsLoading   bool
 	// Task Queue
 	taskQueueTeams   []string
 	taskQueueTasks   []agent.Task
@@ -1165,7 +1166,7 @@ func (m Model) View() string {
 	} else if m.state == viewStats {
 		// Stats uses full width, no left/right split
 		contentHeight := m.height - 7
-		b.WriteString(renderStatsView(m.statsDaily, m.statsRecords, m.statsRange, m.statsLoading, innerWidth, contentHeight))
+		b.WriteString(renderStatsView(m.statsDaily, m.statsRecords, m.statsRange, m.statsBreakdown, m.statsLoading, innerWidth, contentHeight))
 	} else if m.state == viewTaskQueue {
 		// Task Queue uses full width
 		contentHeight := m.height - 7
