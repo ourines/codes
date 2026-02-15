@@ -36,7 +36,13 @@ func loadWorkflowsCmd() tea.Cmd {
 func runWorkflowCmd(wf *workflow.Workflow) tea.Cmd {
 	return func() tea.Msg {
 		dir, _ := os.Getwd()
-		run, err := workflow.RunWorkflow(context.Background(), wf, dir, "")
+		// TUI runs in non-interactive mode: use auto-approval
+		run, err := workflow.RunWorkflow(context.Background(), wf, workflow.RunWorkflowOptions{
+			WorkDir:        dir,
+			Model:          "",
+			ApprovalPrompt: workflow.NewAutoApprovalPrompt(), // Auto-approve in TUI mode
+			MaxRetries:     3,
+		})
 		return workflowRunMsg{run: run, err: err}
 	}
 }

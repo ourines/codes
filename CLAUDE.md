@@ -49,6 +49,7 @@ The root command dynamically selects behavior:
 codes
 ├── init [--yes]
 ├── update / version
+├── doctor                   # Run system diagnostics
 ├── start (alias: s)         # Launch Claude in directory or project alias
 ├── profile (alias: pf)      # add / select / test / list / remove
 ├── project (alias: p)       # add [name] [path] / list / remove

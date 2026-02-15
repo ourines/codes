@@ -19,11 +19,20 @@ type Config struct {
 	Projects        map[string]ProjectEntry `json:"projects,omitempty"`   // 项目别名 -> 项目条目
 	LastWorkDir     string            `json:"lastWorkDir,omitempty"`     // 上次工作目录
 	DefaultBehavior string            `json:"defaultBehavior,omitempty"` // 默认启动行为: "current", "last", "home"
-	Terminal        string            `json:"terminal,omitempty"`        // 终端模拟器: "terminal", "iterm", "warp", 或自定义命令
+	Terminal        string            `json:"terminal,omitempty"`        // 终端模拟器: "terminal", "iterm", "warp", ��自定义命令
 	Remotes         []RemoteHost      `json:"remotes,omitempty"`         // 远程 SSH 主机
 	ProjectsDir     string            `json:"projects_dir,omitempty"`    // git clone 默认目标目录
 	AutoUpdate      string            `json:"auto_update,omitempty"`     // 自动更新模式: "notify", "silent", "off"
 	Editor          string            `json:"editor,omitempty"`          // 编辑器命令: "code", "cursor", "zed", etc.
+	Webhooks        []WebhookConfig   `json:"webhooks,omitempty"`        // Webhook 通知配置
+}
+
+// WebhookConfig represents a webhook notification endpoint.
+type WebhookConfig struct {
+	Name   string   `json:"name"`             // 配置名称（可选，用于管理多个webhook）
+	URL    string   `json:"url"`              // Webhook URL
+	Format string   `json:"format,omitempty"` // "slack" or "feishu" (默认 "slack")
+	Events []string `json:"events,omitempty"` // 事件过滤 ["task_completed", "task_failed"] (空表示全部)
 }
 
 // RemoteHost represents a remote SSH host configuration.
@@ -147,6 +156,25 @@ func (c *Config) UnmarshalJSON(data []byte) error {
 
 var ConfigPath string
 
+// checkConfigPermissions verifies that the config file has secure permissions.
+// Returns an error if the file is readable by group or others (world-readable).
+func checkConfigPermissions(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil // File doesn't exist yet, that's okay
+	}
+
+	mode := info.Mode().Perm()
+
+	// Check if file is readable by group or others (should be 0600)
+	// 0044 = group read + other read
+	if mode&0044 != 0 {
+		return fmt.Errorf("config file has insecure permissions %o (should be 0600): %s", mode, path)
+	}
+
+	return nil
+}
+
 func init() {
 	// 首先检查项目根目录的配置文件
 	pwd, _ := os.Getwd()
@@ -161,6 +189,12 @@ func init() {
 }
 
 func LoadConfig() (*Config, error) {
+	// Check file permissions before reading
+	if err := checkConfigPermissions(ConfigPath); err != nil {
+		// Only warn, don't fail - to maintain backward compatibility
+		fmt.Fprintf(os.Stderr, "Warning: %v\n", err)
+	}
+
 	data, err := os.ReadFile(ConfigPath)
 	if err != nil {
 		return nil, err
@@ -182,7 +216,18 @@ func SaveConfig(config *Config) error {
 
 	dir := filepath.Dir(ConfigPath)
 	os.MkdirAll(dir, 0755)
-	return os.WriteFile(ConfigPath, data, 0644)
+
+	// Write with secure permissions (0600 = owner read/write only)
+	if err := os.WriteFile(ConfigPath, data, 0600); err != nil {
+		return err
+	}
+
+	// Verify permissions were set correctly
+	if err := checkConfigPermissions(ConfigPath); err != nil {
+		return fmt.Errorf("config saved but permissions are insecure: %w", err)
+	}
+
+	return nil
 }
 
 func TestAPIConfig(config APIConfig) bool {
@@ -814,4 +859,69 @@ func ListRemotes() ([]RemoteHost, error) {
 		return nil, err
 	}
 	return cfg.Remotes, nil
+}
+
+// AddWebhook adds a webhook configuration.
+func AddWebhook(webhook WebhookConfig) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	// Check for duplicate name (if name is provided)
+	if webhook.Name != "" {
+		for _, w := range cfg.Webhooks {
+			if w.Name == webhook.Name {
+				return fmt.Errorf("webhook %q already exists", webhook.Name)
+			}
+		}
+	}
+
+	// Default format to "slack" if not specified
+	if webhook.Format == "" {
+		webhook.Format = "slack"
+	}
+
+	cfg.Webhooks = append(cfg.Webhooks, webhook)
+	return SaveConfig(cfg)
+}
+
+// RemoveWebhook removes a webhook by name or URL.
+func RemoveWebhook(identifier string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	for i, w := range cfg.Webhooks {
+		if w.Name == identifier || w.URL == identifier {
+			cfg.Webhooks = append(cfg.Webhooks[:i], cfg.Webhooks[i+1:]...)
+			return SaveConfig(cfg)
+		}
+	}
+	return fmt.Errorf("webhook %q not found", identifier)
+}
+
+// GetWebhook returns a webhook by name or URL.
+func GetWebhook(identifier string) (*WebhookConfig, bool) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, false
+	}
+
+	for _, w := range cfg.Webhooks {
+		if w.Name == identifier || w.URL == identifier {
+			return &w, true
+		}
+	}
+	return nil, false
+}
+
+// ListWebhooks returns all configured webhooks.
+func ListWebhooks() ([]WebhookConfig, error) {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return nil, err
+	}
+	return cfg.Webhooks, nil
 }

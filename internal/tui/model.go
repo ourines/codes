@@ -37,6 +37,7 @@ const (
 	viewSessionSummary
 	viewPartialRollback
 	viewWorkflows
+	viewLinkForm
 )
 
 type panelFocus int
@@ -56,6 +57,7 @@ type Model struct {
 	addForm       addFormModel
 	profileForm   profileFormModel
 	remoteForm    remoteFormModel
+	linkForm      linkFormModel
 	help          help.Model
 	cfg           *config.Config
 	width         int
@@ -290,6 +292,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == viewAddRemote {
 			return m.updateRemoteForm(msg)
 		}
+		if m.state == viewLinkForm {
+			return m.updateLinkForm(msg)
+		}
 		if m.state == viewSettings {
 			if msg.String() != "tab" {
 				return m.updateSettings(msg)
@@ -370,7 +375,7 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.focus = focusLeft
 			return m, nil
 
-		case msg.String() == "right" || msg.String() == "l":
+		case msg.String() == "right":
 			if m.state == viewProjects && m.focus == focusLeft {
 				// Only activate right panel if there are running sessions
 				if item, ok := m.projectList.SelectedItem().(projectItem); ok {
@@ -381,6 +386,14 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 						return m, nil
 					}
 				}
+			}
+
+		case msg.String() == "l" && m.state == viewProjects:
+			// Open link management for selected project
+			if item, ok := m.projectList.SelectedItem().(projectItem); ok {
+				m.state = viewLinkForm
+				m.linkForm = newLinkForm(item.info.Name, m.cfg)
+				return m, nil
 			}
 
 		case msg.String() == "a" && m.state == viewProjects:
@@ -684,6 +697,40 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.state = viewProjects
 		m.projectList.SetItems(loadProjects())
 		m.err = ""
+		return m, nil
+
+	case projectLinkedMsg:
+		if msg.err != nil {
+			m.linkForm.err = msg.err.Error()
+			return m, nil
+		}
+		// Reload config and return to project list
+		cfg, err := config.LoadConfig()
+		if err != nil {
+			m.err = err.Error()
+			return m, nil
+		}
+		m.cfg = cfg
+		m.state = viewProjects
+		m.projectList.SetItems(loadProjects())
+		m.statusMsg = fmt.Sprintf("Linked %s → %s", msg.projectName, msg.linkedName)
+		return m, nil
+
+	case projectUnlinkedMsg:
+		if msg.err != nil {
+			m.linkForm.err = msg.err.Error()
+			return m, nil
+		}
+		// Reload config and return to project list
+		cfg, err := config.LoadConfig()
+		if err != nil {
+			m.err = err.Error()
+			return m, nil
+		}
+		m.cfg = cfg
+		m.state = viewProjects
+		m.projectList.SetItems(loadProjects())
+		m.statusMsg = fmt.Sprintf("Unlinked %s ⨯ %s", msg.projectName, msg.linkedName)
 		return m, nil
 
 	case pathDebounceMsg:
@@ -1165,6 +1212,8 @@ func (m Model) View() string {
 		b.WriteString(m.profileForm.View())
 	} else if m.state == viewAddRemote {
 		b.WriteString(m.remoteForm.View())
+	} else if m.state == viewLinkForm {
+		return m.viewLinkForm()
 	} else if m.state == viewSettings {
 		// Settings uses full width, no left/right split
 		contentHeight := m.height - 7
