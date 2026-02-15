@@ -194,6 +194,23 @@ func renderProjectDetail(info config.ProjectInfo, width, height int, mgr *sessio
 		}
 	}
 
+	// Linked projects
+	if len(info.Links) > 0 {
+		b.WriteString("\n")
+		b.WriteString(fmt.Sprintf("  %s", detailLabelStyle.Render("Links:")))
+		b.WriteString("\n")
+		for _, link := range info.Links {
+			linkText := link.Name
+			if link.Role != "" {
+				linkText += lipgloss.NewStyle().Foreground(mutedColor).Render(" ("+link.Role+")")
+			}
+			b.WriteString(fmt.Sprintf("    %s %s",
+				statusOkStyle.Render("→"),
+				detailValueStyle.Render(linkText)))
+			b.WriteString("\n")
+		}
+	}
+
 	// Keybinding hints
 	b.WriteString("\n")
 	if focused {

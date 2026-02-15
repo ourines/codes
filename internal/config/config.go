@@ -45,8 +45,9 @@ func (r RemoteHost) UserAtHost() string {
 
 // ProjectEntry represents a project with an optional remote host.
 type ProjectEntry struct {
-	Path   string `json:"path"`
-	Remote string `json:"remote,omitempty"` // remote host name, empty = local
+	Path   string        `json:"path"`
+	Remote string        `json:"remote,omitempty"` // remote host name, empty = local
+	Links  []ProjectLink `json:"links,omitempty"`  // linked projects
 }
 
 // UnmarshalJSON supports both old string format and new object format.
@@ -67,9 +68,9 @@ func (p *ProjectEntry) UnmarshalJSON(data []byte) error {
 }
 
 // MarshalJSON saves local projects as plain string (backward compat),
-// remote projects as object.
+// remote or linked projects as object.
 func (p ProjectEntry) MarshalJSON() ([]byte, error) {
-	if p.Remote == "" {
+	if p.Remote == "" && len(p.Links) == 0 {
 		return json.Marshal(p.Path)
 	}
 	type Alias ProjectEntry
@@ -665,14 +666,15 @@ func GetDefaultBehavior() string {
 
 // ProjectInfo holds detailed information about a registered project.
 type ProjectInfo struct {
-	Name           string   `json:"name"`
-	Path           string   `json:"path"`
-	Remote         string   `json:"remote,omitempty"` // remote host name, empty = local
-	Exists         bool     `json:"exists"`
-	GitBranch      string   `json:"gitBranch,omitempty"`
-	GitDirty       bool     `json:"gitDirty"`
-	HasClaudeMD    bool     `json:"hasClaudeMd"`
-	RecentBranches []string `json:"recentBranches,omitempty"`
+	Name           string        `json:"name"`
+	Path           string        `json:"path"`
+	Remote         string        `json:"remote,omitempty"` // remote host name, empty = local
+	Exists         bool          `json:"exists"`
+	GitBranch      string        `json:"gitBranch,omitempty"`
+	GitDirty       bool          `json:"gitDirty"`
+	HasClaudeMD    bool          `json:"hasClaudeMd"`
+	RecentBranches []string      `json:"recentBranches,omitempty"`
+	Links          []ProjectLink `json:"links,omitempty"`
 }
 
 // GetProjectInfo aggregates project metadata including git status and file checks.
@@ -686,6 +688,7 @@ func GetProjectInfoFromEntry(name string, entry ProjectEntry) ProjectInfo {
 		Name:   name,
 		Path:   entry.Path,
 		Remote: entry.Remote,
+		Links:  entry.Links,
 	}
 
 	// For remote projects, skip local filesystem checks
