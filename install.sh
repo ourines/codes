@@ -95,6 +95,14 @@ main() {
     tar -xzf "${TMPDIR}/${ARCHIVE}" -C "$TMPDIR"
     chmod +x "${TMPDIR}/${BINARY}"
 
+    # macOS: re-sign binary locally to avoid AMFI code signing cache issues
+    # CI signs on GitHub runners, but the ad-hoc signature may be cached as
+    # invalid by macOS AMFI on the user's machine, causing SIGKILL on launch.
+    if [ "$OS" = "darwin" ] && command -v codesign >/dev/null 2>&1; then
+        codesign --force --sign - "${TMPDIR}/${BINARY}" >/dev/null 2>&1
+        ok "Code signed for macOS"
+    fi
+
     # Try /usr/local/bin first, sudo if needed, fall back to ~/bin
     installed=false
     if [ -w "$INSTALL_DIR" ]; then

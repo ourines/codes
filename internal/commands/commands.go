@@ -553,6 +553,11 @@ func installBinary() (string, bool) {
 		return "", false
 	}
 
+	// macOS: re-sign to prevent AMFI SIGKILL on ad-hoc signed binaries
+	if runtime.GOOS == "darwin" {
+		exec.Command("codesign", "--force", "--sign", "-", installPath).Run()
+	}
+
 	ui.ShowSuccess("codes installed to %s", installPath)
 
 	if runtime.GOOS == "windows" {

@@ -8,6 +8,7 @@ import (
 	"io"
 	"net/http"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"time"
@@ -195,6 +196,7 @@ func ReplaceSelf(newBinaryPath string) error {
 			os.Remove(newBinaryPath)
 		}
 	}
+	codesignDarwin(self)
 	return nil
 }
 
@@ -280,4 +282,16 @@ func copyFile(src, dst string) error {
 
 	_, err = io.Copy(out, in)
 	return err
+}
+
+// codesignDarwin re-signs a binary with an ad-hoc signature on macOS.
+// This prevents SIGKILL from macOS AMFI (Apple Mobile File Integrity) which
+// can reject binaries whose code signing cache is stale or was created on a
+// different machine (e.g. CI runners).
+func codesignDarwin(path string) {
+	if runtime.GOOS != "darwin" {
+		return
+	}
+	cmd := exec.Command("codesign", "--force", "--sign", "-", path)
+	_ = cmd.Run() // best-effort; ignore errors
 }
