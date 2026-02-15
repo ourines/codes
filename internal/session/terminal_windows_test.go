@@ -155,8 +155,8 @@ func TestBuildWindowsBatchScript_WithArgs(t *testing.T) {
 	args := []string{"--model", "opus"}
 	script, _ := buildWindowsBatchScript("s1", "C:\\tmp", args, nil)
 
-	if !strings.Contains(script, "claude --model opus") {
-		t.Error("batch script should pass args to claude")
+	if !strings.Contains(script, `claude "--model" "opus"`) {
+		t.Error("batch script should pass quoted args to claude")
 	}
 }
 
