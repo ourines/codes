@@ -247,6 +247,29 @@ var ConfigListCmd = &cobra.Command{
 	},
 }
 
+// ConfigExportCmd represents the config export command
+var ConfigExportCmd = &cobra.Command{
+	Use:   "export",
+	Short: "Export configuration to stdout or file",
+	Long:  "Export configuration as JSON. Sensitive values (TOKEN, KEY, SECRET, PASSWORD) are redacted.",
+	Args:  cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		file, _ := cmd.Flags().GetString("file")
+		RunConfigExport(file)
+	},
+}
+
+// ConfigImportCmd represents the config import command
+var ConfigImportCmd = &cobra.Command{
+	Use:   "import <file>",
+	Short: "Import configuration from a file",
+	Long:  "Import configuration from a JSON file, merging with existing config. Redacted values are skipped.",
+	Args:  cobra.ExactArgs(1),
+	Run: func(cmd *cobra.Command, args []string) {
+		RunConfigImport(args[0])
+	},
+}
+
 // ProjectAddCmd represents the project add command
 var ProjectAddCmd = &cobra.Command{
 	Use:   "add [name] [path]",
@@ -341,6 +364,8 @@ func init() {
 	ConfigCmd.AddCommand(ConfigGetCmd)
 	ConfigCmd.AddCommand(ConfigResetCmd)
 	ConfigCmd.AddCommand(ConfigListCmd)
+	ConfigCmd.AddCommand(ConfigExportCmd)
+	ConfigCmd.AddCommand(ConfigImportCmd)
 
 	// Claude sub-commands
 	ClaudeCmd.AddCommand(ClaudeUpdateCmd)
