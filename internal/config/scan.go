@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -101,10 +102,17 @@ func decodeClaudeProjectPath(encoded string) string {
 		return ""
 	}
 
+	// On Windows, the first part may be a drive letter like "C:"
+	root := "/"
+	if runtime.GOOS == "windows" && len(parts) > 0 && len(parts[0]) == 2 && parts[0][1] == ':' {
+		root = parts[0] + string(filepath.Separator)
+		parts = parts[1:]
+	}
+
 	// Use greedy directory-segment matching:
-	// Start from root "/", try to match the longest possible segment
+	// Start from root, try to match the longest possible segment
 	// that corresponds to a real directory or file.
-	return greedyPathResolve("/", parts, 0)
+	return greedyPathResolve(root, parts, 0)
 }
 
 // greedyPathResolve attempts to reconstruct a real path from dash-separated segments.

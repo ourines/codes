@@ -173,6 +173,8 @@ func TestImportDiscoveredProjects(t *testing.T) {
 // pathToEncoded converts a real path to Claude's encoding by replacing "/" with "-"
 // and stripping the leading "/".
 func pathToEncoded(path string) string {
+	// Normalize to forward slashes for cross-platform consistency
+	path = filepath.ToSlash(path)
 	// Remove leading "/"
 	if len(path) > 0 && path[0] == '/' {
 		path = path[1:]
