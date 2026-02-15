@@ -76,7 +76,7 @@ git clone https://github.com/ourines/codes.git && cd codes && make build
 Claude: 我来组建一个包含 coder 和 tester 的团队...
         [调用 team_create, agent_add, task_create 工具]
 
-你: 进��如何？
+你: 进度如何？
 
 Claude: [调用 team_status 工具]
         coder 已完成 2/3 个任务。tester 正在等待任务 #3 完成。
