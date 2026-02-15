@@ -93,15 +93,19 @@ type Message struct {
 
 // AgentState represents the on-disk state of a running agent daemon.
 type AgentState struct {
-	Name        string      `json:"name"`
-	Team        string      `json:"team"`
-	PID         int         `json:"pid"`
-	Status      AgentStatus `json:"status"`
-	CurrentTask int         `json:"currentTask,omitempty"`
-	SessionID   string      `json:"sessionId,omitempty"` // persistent Claude session for message handling
-	StartedAt   time.Time   `json:"startedAt"`
-	UpdatedAt   time.Time   `json:"updatedAt"`
+	Name         string      `json:"name"`
+	Team         string      `json:"team"`
+	PID          int         `json:"pid"`
+	Status       AgentStatus `json:"status"`
+	CurrentTask  int         `json:"currentTask,omitempty"`
+	SessionID    string      `json:"sessionId,omitempty"` // persistent Claude session for message handling
+	StartedAt    time.Time   `json:"startedAt"`
+	UpdatedAt    time.Time   `json:"updatedAt"`
+	RestartCount int         `json:"restartCount,omitempty"` // number of times daemon has been restarted
+	LastCrash    *time.Time  `json:"lastCrash,omitempty"`    // timestamp of last crash/unexpected exit
+	Supervised   bool        `json:"supervised,omitempty"`   // whether running under supervisor
 }
+
 
 // ClaudeResult holds the parsed output from a Claude CLI invocation.
 type ClaudeResult struct {
