@@ -18,6 +18,7 @@ import (
 	"codes/internal/session"
 	"codes/internal/stats"
 	"codes/internal/update"
+	"codes/internal/workflow"
 )
 
 type viewState int
@@ -31,6 +32,7 @@ const (
 	viewAddForm
 	viewAddProfile
 	viewAddRemote
+	viewWorkflows
 )
 
 type panelFocus int
@@ -67,6 +69,10 @@ type Model struct {
 	statsRecords []stats.SessionRecord
 	statsRange   string // "week" | "month" | "all"
 	statsLoading bool
+	// Workflows tab
+	workflowList   []workflow.Workflow
+	workflowRun    *workflow.WorkflowRun
+	workflowCursor int
 }
 
 // projectDeletedMsg is sent after deleting a project.
@@ -275,6 +281,9 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.state == viewStats {
 			return m.updateStats(msg)
 		}
+		if m.state == viewWorkflows {
+			return m.updateWorkflows(msg)
+		}
 
 		// Right panel focused — handle session selection
 		if m.focus == focusRight && m.state == viewProjects {
@@ -311,6 +320,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					m.statsLoading = true
 					m.statsRange = "week"
 					return m, loadStatsCmd("week")
+				}
+			case viewStats:
+				m.state = viewWorkflows
+				if len(m.workflowList) == 0 {
+					return m, loadWorkflowsCmd()
 				}
 			default:
 				m.state = viewProjects
@@ -840,6 +854,23 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.latestVersion = msg.latestVersion
 		return m, nil
 
+	case workflowsLoadedMsg:
+		if msg.err != nil {
+			m.err = fmt.Sprintf("workflows: %v", msg.err)
+		} else {
+			m.workflowList = msg.workflows
+		}
+		return m, nil
+
+	case workflowRunMsg:
+		m.statusMsg = ""
+		if msg.err != nil {
+			m.err = fmt.Sprintf("workflow: %v", msg.err)
+		} else {
+			m.workflowRun = msg.run
+		}
+		return m, nil
+
 	case settingChangedMsg:
 		m.cfg, _ = config.LoadConfig()
 		return m, nil
@@ -1061,6 +1092,9 @@ func (m Model) View() string {
 		// Stats uses full width, no left/right split
 		contentHeight := m.height - 7
 		b.WriteString(renderStatsView(m.statsDaily, m.statsRecords, m.statsRange, m.statsLoading, innerWidth, contentHeight))
+	} else if m.state == viewWorkflows {
+		contentHeight := m.height - 7
+		b.WriteString(renderWorkflowsView(m.workflowList, m.workflowRun, m.workflowCursor, innerWidth, contentHeight))
 	} else {
 		// Main content: left list + right detail
 		leftWidth := innerWidth / 2
@@ -1121,6 +1155,7 @@ func (m Model) renderHeader() string {
 	remotesTab := inactiveTabStyle.Render("Remotes")
 	settingsTab := inactiveTabStyle.Render("Settings")
 	statsTab := inactiveTabStyle.Render("Stats")
+	workflowsTab := inactiveTabStyle.Render("Workflows")
 
 	if m.state == viewProjects || m.state == viewAddForm {
 		projectTab = activeTabStyle.Render("Projects")
@@ -1132,6 +1167,8 @@ func (m Model) renderHeader() string {
 		settingsTab = activeTabStyle.Render("Settings")
 	} else if m.state == viewStats {
 		statsTab = activeTabStyle.Render("Stats")
+	} else if m.state == viewWorkflows {
+		workflowsTab = activeTabStyle.Render("Workflows")
 	}
 
 	defaultCfg := ""
@@ -1168,7 +1205,7 @@ func (m Model) renderHeader() string {
 		}
 	}
 
-	tabs := fmt.Sprintf("%s  %s  %s  %s  %s", projectTab, profileTab, remotesTab, settingsTab, statsTab)
+	tabs := fmt.Sprintf("%s  %s  %s  %s  %s  %s", projectTab, profileTab, remotesTab, settingsTab, statsTab, workflowsTab)
 	gap := strings.Repeat(" ", max(0, innerWidth-lipgloss.Width(title)-lipgloss.Width(tabs)-lipgloss.Width(defaultCfg)-lipgloss.Width(sessionInfo)-lipgloss.Width(versionInfo)-9))
 
 	return fmt.Sprintf("%s  %s%s%s%s %s", title, tabs, gap, sessionInfo, defaultCfg, versionInfo)
@@ -1189,6 +1226,9 @@ func (m Model) renderHelp() string {
 	}
 	if m.state == viewStats {
 		return formHintStyle.Render("w week  m month  a all time  r refresh  tab switch  q quit")
+	}
+	if m.state == viewWorkflows {
+		return formHintStyle.Render("↑↓/jk select  enter run  d delete  r refresh  tab switch  q quit")
 	}
 	if m.focus == focusRight && m.state == viewProjects {
 		return formHintStyle.Render("↑↓/jk select  Enter open  x kill  ← back  q quit")
