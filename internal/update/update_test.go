@@ -1,6 +1,9 @@
 package update
 
-import "testing"
+import (
+	"runtime"
+	"testing"
+)
 
 func TestCompareVersions(t *testing.T) {
 	tests := []struct {
@@ -93,8 +96,13 @@ func TestPlatformBinaryName(t *testing.T) {
 	if name == "" {
 		t.Error("platformBinaryName() returned empty string")
 	}
-	// Should contain "codes-"
-	if len(name) < 6 || name[:6] != "codes-" {
-		t.Errorf("platformBinaryName() = %q, expected prefix 'codes-'", name)
+	if runtime.GOOS == "windows" {
+		if name != "codes.exe" {
+			t.Errorf("platformBinaryName() = %q, want %q", name, "codes.exe")
+		}
+	} else {
+		if name != "codes" {
+			t.Errorf("platformBinaryName() = %q, want %q", name, "codes")
+		}
 	}
 }
