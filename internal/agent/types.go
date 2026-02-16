@@ -62,6 +62,7 @@ type Task struct {
 	WorkDir     string       `json:"workDir,omitempty"`  // explicit working directory (overrides project)
 	BlockedBy   []int        `json:"blockedBy,omitempty"`
 	SessionID   string       `json:"sessionId,omitempty"`
+	Adapter     string       `json:"adapter,omitempty"`   // CLI adapter to use (default: "claude")
 	Result      string       `json:"result,omitempty"`
 	Error       string       `json:"error,omitempty"`
 	CreatedAt   time.Time    `json:"createdAt"`
