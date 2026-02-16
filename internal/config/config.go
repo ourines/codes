@@ -26,14 +26,18 @@ type Config struct {
 	AutoUpdate      string            `json:"auto_update,omitempty"`     // 自动更新模式: "notify", "silent", "off"
 	Editor          string            `json:"editor,omitempty"`          // 编辑器命令: "code", "cursor", "zed", etc.
 	Webhooks        []WebhookConfig   `json:"webhooks,omitempty"`        // Webhook 通知配置
+	Hooks           map[string]string `json:"hooks,omitempty"`           // 事件钩子 {"on_task_completed": "/path/to/script.sh"}
+	HTTPTokens      []string          `json:"httpTokens,omitempty"`      // HTTP API Bearer tokens
+	HTTPBind        string            `json:"httpBind,omitempty"`        // HTTP server bind address (e.g., ":8080")
 }
 
 // WebhookConfig represents a webhook notification endpoint.
 type WebhookConfig struct {
-	Name   string   `json:"name"`             // 配置名称（可选，用于管理多个webhook）
-	URL    string   `json:"url"`              // Webhook URL
-	Format string   `json:"format,omitempty"` // "slack" or "feishu" (默认 "slack")
-	Events []string `json:"events,omitempty"` // 事件过滤 ["task_completed", "task_failed"] (空表示全部)
+	Name   string            `json:"name"`             // 配置名称（可选，用于管理多个webhook）
+	URL    string            `json:"url"`              // Webhook URL
+	Format string            `json:"format,omitempty"` // "slack", "feishu", "dingtalk", "telegram", "custom" (默认 "slack")
+	Events []string          `json:"events,omitempty"` // 事件过滤 ["task_completed", "task_failed"] (空表示全部)
+	Extra  map[string]string `json:"extra,omitempty"`  // 格式特定参数 (如 telegram 的 chat_id, custom 的 template)
 }
 
 // RemoteHost represents a remote SSH host configuration.
@@ -936,4 +940,70 @@ func ListWebhooks() ([]WebhookConfig, error) {
 		return nil, err
 	}
 	return cfg.Webhooks, nil
+}
+
+// validHookEvents defines the set of allowed hook event names.
+var validHookEvents = map[string]bool{
+	"on_task_completed": true,
+	"on_task_failed":    true,
+}
+
+// GetHook returns the script path for the given event, or empty string if not set.
+func GetHook(event string) string {
+	cfg, err := LoadConfig()
+	if err != nil || cfg.Hooks == nil {
+		return ""
+	}
+	return cfg.Hooks[event]
+}
+
+// SetHook sets a hook script for the given event.
+// Validates that the event name is valid and the script file exists and is executable.
+func SetHook(event, scriptPath string) error {
+	if !validHookEvents[event] {
+		return fmt.Errorf("invalid hook event %q (valid: on_task_completed, on_task_failed)", event)
+	}
+
+	info, err := os.Stat(scriptPath)
+	if err != nil {
+		return fmt.Errorf("script not found: %w", err)
+	}
+	if runtime.GOOS != "windows" {
+		if info.Mode()&0111 == 0 {
+			return fmt.Errorf("script is not executable: %s", scriptPath)
+		}
+	}
+
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+
+	if cfg.Hooks == nil {
+		cfg.Hooks = make(map[string]string)
+	}
+	cfg.Hooks[event] = scriptPath
+	return SaveConfig(cfg)
+}
+
+// RemoveHook removes the hook for the given event.
+func RemoveHook(event string) error {
+	cfg, err := LoadConfig()
+	if err != nil {
+		return err
+	}
+	if cfg.Hooks == nil {
+		return nil
+	}
+	delete(cfg.Hooks, event)
+	return SaveConfig(cfg)
+}
+
+// ListHooks returns all configured hooks.
+func ListHooks() map[string]string {
+	cfg, err := LoadConfig()
+	if err != nil || cfg.Hooks == nil {
+		return make(map[string]string)
+	}
+	return cfg.Hooks
 }

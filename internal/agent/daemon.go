@@ -237,6 +237,7 @@ func (d *Daemon) processMessages(ctx context.Context, state *AgentState) {
 			opts.Resume = true
 		}
 
+		// Use default adapter (claude) for message handling
 		result, err := RunClaude(ctx, opts)
 		if err != nil {
 			d.logger.Printf("error responding to message: %v", err)
@@ -374,9 +375,17 @@ func (d *Daemon) executeTask(ctx context.Context, task *Task, state *AgentState)
 		opts.Resume = true
 	}
 
-	result, err := RunClaude(ctx, opts)
+	// Determine which adapter to use
+	adapterName := task.Adapter
+	if adapterName == "" {
+		adapterName = "claude" // Default to claude
+	}
+
+	var result *ClaudeResult
+	result, err = RunWithAdapter(ctx, adapterName, opts)
+
 	if err != nil {
-		d.logger.Printf("claude error for task %d: %v", task.ID, err)
+		d.logger.Printf("error executing task %d with adapter %s: %v", task.ID, adapterName, err)
 		FailTask(d.TeamName, task.ID, err.Error())
 		d.reportTaskFailed(task, err.Error())
 		return
@@ -488,6 +497,9 @@ func (d *Daemon) writeNotification(task *Task, status, detail string) {
 
 	// Send webhook notifications (if configured)
 	d.sendWebhookNotifications(status, task)
+
+	// Execute shell hook (if configured)
+	d.executeHook(status, task, detail)
 }
 
 // truncate shortens a string to maxLen, adding "..." if truncated.
@@ -534,9 +546,42 @@ func (d *Daemon) sendWebhookNotifications(status string, task *Task) {
 		}
 
 		// Send notification
-		notifier := notify.NewWebhookNotifier(webhook.URL, webhook.Format)
+		notifier := notify.NewWebhookNotifier(webhook.URL, webhook.Format, webhook.Extra)
 		if err := notifier.Send(notification); err != nil {
 			d.logger.Printf("webhook notification error (%s): %v", webhook.URL, err)
 		}
+	}
+}
+
+// executeHook runs the shell hook script for the given task status.
+func (d *Daemon) executeHook(status string, task *Task, detail string) {
+	// Map status to event name
+	event := "on_task_failed"
+	if status == "completed" {
+		event = "on_task_completed"
+	}
+
+	scriptPath := config.GetHook(event)
+	if scriptPath == "" {
+		return
+	}
+
+	payload := notify.HookPayload{
+		Team:      d.TeamName,
+		TaskID:    task.ID,
+		Subject:   task.Subject,
+		Status:    status,
+		Agent:     d.AgentName,
+		Timestamp: time.Now().UTC().Format(time.RFC3339),
+	}
+	if status == "completed" {
+		payload.Result = truncate(detail, 500)
+	} else {
+		payload.Error = detail
+	}
+
+	runner := notify.NewHookRunner(scriptPath)
+	if err := runner.Execute(payload); err != nil {
+		d.logger.Printf("hook execution error (%s): %v", event, err)
 	}
 }

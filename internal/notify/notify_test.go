@@ -50,7 +50,7 @@ func TestWebhookNotifier_Slack(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	wh := NewWebhookNotifier(srv.URL, "slack")
+	wh := NewWebhookNotifier(srv.URL, "slack", nil)
 	err := wh.Send(Notification{Title: "task done", Message: "build passed"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -70,7 +70,7 @@ func TestWebhookNotifier_Feishu(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	wh := NewWebhookNotifier(srv.URL, "feishu")
+	wh := NewWebhookNotifier(srv.URL, "feishu", nil)
 	err := wh.Send(Notification{Title: "deploy", Message: "v1.0 released"})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -94,10 +94,98 @@ func TestWebhookNotifier_Error(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	wh := NewWebhookNotifier(srv.URL, "slack")
+	wh := NewWebhookNotifier(srv.URL, "slack", nil)
 	err := wh.Send(Notification{Title: "test", Message: "msg"})
 	if err == nil {
 		t.Fatal("expected error for 500 response")
+	}
+}
+
+func TestWebhookNotifier_Dingtalk(t *testing.T) {
+	var received map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&received)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	wh := NewWebhookNotifier(srv.URL, "dingtalk", nil)
+	err := wh.Send(Notification{Title: "build", Message: "success"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if received["msgtype"] != "text" {
+		t.Fatalf("expected msgtype=text, got: %v", received["msgtype"])
+	}
+	text, ok := received["text"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected text map, got: %T", received["text"])
+	}
+	if text["content"] != "build: success" {
+		t.Fatalf("unexpected content: %v", text["content"])
+	}
+}
+
+func TestWebhookNotifier_Telegram(t *testing.T) {
+	var received map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&received)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	extra := map[string]string{"chat_id": "123456"}
+	wh := NewWebhookNotifier(srv.URL, "telegram", extra)
+	err := wh.Send(Notification{Title: "alert", Message: "disk full"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if received["chat_id"] != "123456" {
+		t.Fatalf("expected chat_id=123456, got: %v", received["chat_id"])
+	}
+	if received["text"] != "alert: disk full" {
+		t.Fatalf("unexpected text: %v", received["text"])
+	}
+	if received["parse_mode"] != "HTML" {
+		t.Fatalf("expected parse_mode=HTML, got: %v", received["parse_mode"])
+	}
+}
+
+func TestWebhookNotifier_Custom(t *testing.T) {
+	var received map[string]any
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewDecoder(r.Body).Decode(&received)
+		w.WriteHeader(200)
+	}))
+	defer srv.Close()
+
+	extra := map[string]string{
+		"template": `{"body": "{{.Title}} - {{.Message}}", "combined": "{{.Text}}"}`,
+	}
+	wh := NewWebhookNotifier(srv.URL, "custom", extra)
+	err := wh.Send(Notification{Title: "deploy", Message: "v2.0"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if received["body"] != "deploy - v2.0" {
+		t.Fatalf("unexpected body: %v", received["body"])
+	}
+	if received["combined"] != "deploy: v2.0" {
+		t.Fatalf("unexpected combined: %v", received["combined"])
+	}
+}
+
+func TestWebhookNotifier_Custom_MissingTemplate(t *testing.T) {
+	wh := NewWebhookNotifier("http://localhost", "custom", nil)
+	err := wh.Send(Notification{Title: "test", Message: "msg"})
+	if err == nil {
+		t.Fatal("expected error for missing template")
 	}
 }
 
