@@ -3,6 +3,7 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
@@ -726,6 +727,11 @@ func registerAgentTools(server *mcpsdk.Server) {
 		Name:        "team_watch",
 		Description: "Get a bash command that monitors agent task completion notifications in real time. RECOMMENDED: after starting agents or creating tasks, call this tool and run the returned command using the Task tool (run_in_background=true, subagent_type=Bash). This provides real-time push notifications when agents complete or fail tasks, complementing the passive pending_notifications piggyback in other tool responses.",
 	}, teamWatchHandler)
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "team_subscribe",
+		Description: "Subscribe to agent task notifications for a team. This tool BLOCKS until a notification arrives or timeout is reached. Designed for use with background Task agents: the agent calls team_subscribe and blocks waiting; when a notification arrives, the tool returns and the agent completes, triggering a <task-notification> that wakes the main session. Prefer this over team_watch for programmatic notification delivery.",
+	}, teamSubscribeHandler)
 }
 
 // -- test_sampling --
@@ -804,4 +810,96 @@ func teamWatchHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input te
 		Command:     cmd,
 		Instruction: "Run this command using the Task tool with run_in_background=true and subagent_type=Bash. You will be automatically notified when agents complete tasks.",
 	}, nil
+}
+
+// -- team_subscribe --
+
+type teamSubscribeInput struct {
+	Team    string `json:"team" jsonschema:"Team name to subscribe to"`
+	Timeout int    `json:"timeout,omitempty" jsonschema:"Max wait time in minutes (default 10)"`
+}
+
+type teamSubscribeOutput struct {
+	Notifications []taskNotification `json:"notifications"`
+	TimedOut      bool               `json:"timed_out"`
+	Team          string             `json:"team"`
+}
+
+func teamSubscribeHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input teamSubscribeInput) (*mcpsdk.CallToolResult, teamSubscribeOutput, error) {
+	if input.Team == "" {
+		return nil, teamSubscribeOutput{}, fmt.Errorf("team name is required")
+	}
+
+	timeout := input.Timeout
+	if timeout <= 0 {
+		timeout = 10
+	}
+
+	ensureMonitorRunning(mcpServer)
+
+	d := time.Duration(timeout) * time.Minute
+	if subscribeTimeoutOverride > 0 {
+		d = subscribeTimeoutOverride
+	}
+	deadline := time.Now().Add(d)
+
+	// Use notifCond to wait efficiently for new notifications.
+	// The cond is based on pendingMu, so we hold the lock during Wait.
+	pendingMu.Lock()
+	for {
+		matched := drainTeamNotificationsLocked(input.Team)
+		if len(matched) > 0 {
+			pendingMu.Unlock()
+			return nil, teamSubscribeOutput{
+				Notifications: matched,
+				TimedOut:      false,
+				Team:          input.Team,
+			}, nil
+		}
+
+		// Check context cancellation.
+		select {
+		case <-ctx.Done():
+			pendingMu.Unlock()
+			return nil, teamSubscribeOutput{
+				TimedOut: true,
+				Team:     input.Team,
+			}, nil
+		default:
+		}
+
+		// Check deadline.
+		if time.Now().After(deadline) {
+			pendingMu.Unlock()
+			return nil, teamSubscribeOutput{
+				TimedOut: true,
+				Team:     input.Team,
+			}, nil
+		}
+
+		// Wait with a periodic wake-up to re-check deadline/ctx.
+		// notifCond.Wait() releases pendingMu and re-acquires on wake.
+		// Use a goroutine to impose a wake-up cap so we don't block forever
+		// if no notifications arrive.
+		wakeUp := make(chan struct{}, 1)
+		go func() {
+			select {
+			case <-time.After(5 * time.Second):
+			case <-ctx.Done():
+			}
+			// Broadcast to wake up all waiters so they can re-check.
+			notifCond.Broadcast()
+			select {
+			case wakeUp <- struct{}{}:
+			default:
+			}
+		}()
+
+		notifCond.Wait()
+		// Drain the wake-up channel to avoid goroutine leak.
+		select {
+		case <-wakeUp:
+		default:
+		}
+	}
 }

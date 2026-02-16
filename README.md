@@ -11,7 +11,7 @@ Environment configuration management, project management, and multi-agent collab
 - **Agent Teams** — Autonomous Claude agents collaborating with task dependencies, messaging, and auto-reporting
 - **Workflow Templates** — YAML-based agent team templates for repeatable multi-agent pipelines
 - **Cost Tracking** — Session-level API usage statistics by project and model
-- **MCP Server** — 39 tools integrated into Claude Code for managing everything from conversations
+- **MCP Server** — 40 tools integrated into Claude Code for managing everything from conversations
 - **Cross-Platform** — Linux, macOS, Windows (amd64 & arm64)
 
 ## Install
@@ -289,7 +289,7 @@ codes/
 │   ├── agent/          # Agent teams: daemon, runner, storage
 │   ├── commands/       # Cobra CLI commands
 │   ├── config/         # Configuration management
-│   ├── mcp/            # MCP server (39 tools, stdio transport)
+│   ├── mcp/            # MCP server (40 tools, stdio transport)
 │   ├── session/        # Terminal session manager
 │   ├── stats/          # Cost tracking and aggregation
 │   ├── remote/         # SSH remote management

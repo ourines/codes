@@ -36,10 +36,19 @@ var (
 	pendingMu            sync.Mutex
 	pendingNotifications []taskNotification
 
+	// notifCond is broadcast whenever new notifications are appended to
+	// pendingNotifications. team_subscribe uses this to wake up
+	// immediately instead of polling with time.Sleep.
+	notifCond = sync.NewCond(&pendingMu)
+
 	// notifDirOverride allows tests to redirect notification scanning
 	// to an isolated temp directory. Empty string means use the default
 	// ~/.codes/notifications path.
 	notifDirOverride string
+
+	// subscribeTimeoutOverride lets tests shorten the team_subscribe
+	// wait duration. Zero means use the input.Timeout value (in minutes).
+	subscribeTimeoutOverride time.Duration
 )
 
 // ensureMonitorRunning starts the singleton notification monitor goroutine
@@ -69,6 +78,37 @@ func drainPendingNotifications() []taskNotification {
 	out := pendingNotifications
 	pendingNotifications = nil
 	return out
+}
+
+// drainTeamNotifications extracts and returns notifications matching the
+// given team name, leaving non-matching ones in the buffer. This is used
+// by team_subscribe to wait for specific team events without consuming
+// notifications destined for other teams' piggyback delivery.
+func drainTeamNotifications(team string) []taskNotification {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	return drainTeamNotificationsLocked(team)
+}
+
+// drainTeamNotificationsLocked is the lock-free inner implementation.
+// Caller must hold pendingMu. Used inside notifCond.Wait loops.
+func drainTeamNotificationsLocked(team string) []taskNotification {
+	if len(pendingNotifications) == 0 {
+		return nil
+	}
+	var matched, remaining []taskNotification
+	for _, n := range pendingNotifications {
+		if n.Team == team {
+			matched = append(matched, n)
+		} else {
+			remaining = append(remaining, n)
+		}
+	}
+	if len(matched) == 0 {
+		return nil
+	}
+	pendingNotifications = remaining
+	return matched
 }
 
 // notificationDir returns the directory to scan for notification files.
@@ -142,6 +182,7 @@ func runNotificationMonitor(server *mcpsdk.Server) {
 			if len(pendingNotifications) < maxPendingNotifications {
 				pendingNotifications = append(pendingNotifications, n)
 			}
+			notifCond.Broadcast()
 			pendingMu.Unlock()
 
 			// Best-effort: also try MCP logging push.
