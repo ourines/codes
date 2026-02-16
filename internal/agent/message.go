@@ -131,3 +131,46 @@ func MarkRead(teamName, messageID string) error {
 	msg.Read = true
 	return writeJSON(path, &msg)
 }
+
+// SendTypedMessage sends a message with a specific type and optional task ID.
+func SendTypedMessage(teamName string, msgType MessageType, from, to, content string, taskID int) (*Message, error) {
+	return sendTypedMessage(teamName, msgType, from, to, content, taskID)
+}
+
+// GetAllTeamMessages reads all messages for a team, sorted by time descending, limited to n.
+func GetAllTeamMessages(teamName string, limit int) ([]*Message, error) {
+	dir := messagesDir(teamName)
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil
+		}
+		return nil, err
+	}
+
+	var messages []*Message
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".json") {
+			continue
+		}
+
+		var msg Message
+		path := filepath.Join(dir, e.Name())
+		if err := readJSON(path, &msg); err != nil {
+			continue
+		}
+
+		messages = append(messages, &msg)
+	}
+
+	// Sort by creation time descending (newest first)
+	sort.Slice(messages, func(i, j int) bool {
+		return messages[i].CreatedAt.After(messages[j].CreatedAt)
+	})
+
+	if limit > 0 && len(messages) > limit {
+		messages = messages[:limit]
+	}
+
+	return messages, nil
+}

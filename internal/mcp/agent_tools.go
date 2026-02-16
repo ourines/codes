@@ -3,6 +3,8 @@ package mcpserver
 import (
 	"context"
 	"fmt"
+	"sort"
+	"strings"
 	"time"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
@@ -293,6 +295,11 @@ func taskUpdateHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input t
 	task, err := agent.UpdateTask(input.Team, input.TaskID, func(t *agent.Task) error {
 		if input.Status != "" {
 			t.Status = agent.TaskStatus(input.Status)
+			// Auto-set StartedAt when transitioning to running
+			if input.Status == "running" && t.StartedAt == nil {
+				now := time.Now()
+				t.StartedAt = &now
+			}
 		}
 		if input.Owner != "" {
 			t.Owner = input.Owner
@@ -346,8 +353,9 @@ type taskGetInput struct {
 }
 
 type taskGetOutput struct {
-	Task          *agent.Task        `json:"task"`
-	Notifications []taskNotification `json:"pending_notifications,omitempty"`
+	Task            *agent.Task        `json:"task"`
+	RunningDuration string             `json:"runningDuration,omitempty"`
+	Notifications   []taskNotification `json:"pending_notifications,omitempty"`
 }
 
 func taskGetHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input taskGetInput) (*mcpsdk.CallToolResult, taskGetOutput, error) {
@@ -355,7 +363,11 @@ func taskGetHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input task
 	if err != nil {
 		return nil, taskGetOutput{}, err
 	}
-	return nil, taskGetOutput{Task: task, Notifications: drainPendingNotifications()}, nil
+	out := taskGetOutput{Task: task, Notifications: drainPendingNotifications()}
+	if task.Status == agent.TaskRunning && task.StartedAt != nil {
+		out.RunningDuration = time.Since(*task.StartedAt).Truncate(time.Second).String()
+	}
+	return nil, out, nil
 }
 
 // -- message_send --
@@ -365,6 +377,8 @@ type messageSendInput struct {
 	From    string `json:"from" jsonschema:"Sender agent name"`
 	To      string `json:"to,omitempty" jsonschema:"Recipient agent name (empty for broadcast)"`
 	Content string `json:"content" jsonschema:"Message content"`
+	Type    string `json:"type,omitempty" jsonschema:"Message type: chat|progress|help_request|discovery (default: chat)"`
+	TaskID  int    `json:"taskId,omitempty" jsonschema:"Related task ID"`
 }
 
 type messageSendOutput struct {
@@ -375,7 +389,11 @@ func messageSendHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input 
 	if input.Team == "" || input.From == "" || input.Content == "" {
 		return nil, messageSendOutput{}, fmt.Errorf("team, from, and content are required")
 	}
-	msg, err := agent.SendMessage(input.Team, input.From, input.To, input.Content)
+	msgType := agent.MsgChat
+	if input.Type != "" {
+		msgType = agent.MessageType(input.Type)
+	}
+	msg, err := agent.SendTypedMessage(input.Team, msgType, input.From, input.To, input.Content, input.TaskID)
 	if err != nil {
 		return nil, messageSendOutput{}, err
 	}
@@ -442,10 +460,14 @@ type teamStatusInput struct {
 }
 
 type teamStatusAgentInfo struct {
-	Name        string `json:"name"`
-	Status      string `json:"status"`
-	Alive       bool   `json:"alive"`
-	CurrentTask int    `json:"currentTask,omitempty"`
+	Name               string `json:"name"`
+	Status             string `json:"status"`
+	Alive              bool   `json:"alive"`
+	CurrentTask        int    `json:"currentTask,omitempty"`
+	CurrentTaskSubject string `json:"currentTaskSubject,omitempty"`
+	Activity           string `json:"activity,omitempty"`
+	RunningDuration    string `json:"runningDuration,omitempty"`
+	Uptime             string `json:"uptime,omitempty"`
 }
 
 type teamStatusTaskSummary struct {
@@ -463,11 +485,21 @@ type teamStatusRecentCompletion struct {
 	CompletedAt string `json:"completedAt,omitempty"`
 }
 
+type teamStatusRecentMessage struct {
+	From      string `json:"from"`
+	To        string `json:"to,omitempty"`
+	Type      string `json:"type"`
+	Content   string `json:"content"`
+	TaskID    int    `json:"taskId,omitempty"`
+	CreatedAt string `json:"createdAt"`
+}
+
 type teamStatusOutput struct {
 	Team              string                      `json:"team"`
 	Agents            []teamStatusAgentInfo       `json:"agents"`
 	Tasks             teamStatusTaskSummary       `json:"tasks"`
 	RecentCompletions []teamStatusRecentCompletion `json:"recentCompletions"`
+	RecentMessages    []teamStatusRecentMessage   `json:"recentMessages,omitempty"`
 	Notifications     []taskNotification          `json:"pending_notifications,omitempty"`
 }
 
@@ -487,6 +519,17 @@ func teamStatusHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input t
 		if state != nil {
 			info.Status = string(state.Status)
 			info.CurrentTask = state.CurrentTask
+			info.CurrentTaskSubject = state.CurrentTaskSubject
+			info.Activity = state.Activity
+			if !state.StartedAt.IsZero() {
+				info.Uptime = time.Since(state.StartedAt).Truncate(time.Second).String()
+			}
+			// Calculate running duration from current task's StartedAt
+			if state.CurrentTask > 0 {
+				if t, err := agent.GetTask(input.Name, state.CurrentTask); err == nil && t.StartedAt != nil {
+					info.RunningDuration = time.Since(*t.StartedAt).Truncate(time.Second).String()
+				}
+			}
 		} else {
 			info.Status = "not started"
 		}
@@ -528,11 +571,27 @@ func teamStatusHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input t
 		completions = completions[len(completions)-5:]
 	}
 
+	// Recent messages
+	var recentMessages []teamStatusRecentMessage
+	if msgs, err := agent.GetAllTeamMessages(input.Name, 10); err == nil {
+		for _, msg := range msgs {
+			recentMessages = append(recentMessages, teamStatusRecentMessage{
+				From:      msg.From,
+				To:        msg.To,
+				Type:      string(msg.Type),
+				Content:   truncateMCP(msg.Content, 200),
+				TaskID:    msg.TaskID,
+				CreatedAt: msg.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			})
+		}
+	}
+
 	return nil, teamStatusOutput{
 		Team:              input.Name,
 		Agents:            agents,
 		Tasks:             summary,
 		RecentCompletions: completions,
+		RecentMessages:    recentMessages,
 		Notifications:     drainPendingNotifications(),
 	}, nil
 }
@@ -620,6 +679,140 @@ func teamStopAllHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input 
 }
 
 // registerAgentTools registers all agent-related MCP tools on the given server.
+// truncateMCP compresses newlines and truncates a string for MCP output.
+func truncateMCP(s string, maxLen int) string {
+	s = strings.ReplaceAll(s, "\n", " ")
+	if len(s) <= maxLen {
+		return s
+	}
+	return s[:maxLen-3] + "..."
+}
+
+// -- team_activity --
+
+type teamActivityInput struct {
+	Name  string `json:"name" jsonschema:"Team name"`
+	Limit int    `json:"limit,omitempty" jsonschema:"Max events to return (default 20, max 100)"`
+}
+
+type activityEvent struct {
+	Timestamp string `json:"timestamp"`
+	Type      string `json:"type"`
+	Agent     string `json:"agent"`
+	Summary   string `json:"summary"`
+	TaskID    int    `json:"taskId,omitempty"`
+}
+
+type teamActivityOutput struct {
+	Team   string          `json:"team"`
+	Events []activityEvent `json:"events"`
+}
+
+func teamActivityHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input teamActivityInput) (*mcpsdk.CallToolResult, teamActivityOutput, error) {
+	if input.Name == "" {
+		return nil, teamActivityOutput{}, fmt.Errorf("team name is required")
+	}
+
+	limit := input.Limit
+	if limit <= 0 {
+		limit = 20
+	}
+	if limit > 100 {
+		limit = 100
+	}
+
+	var events []activityEvent
+
+	// Source 1: Messages
+	if msgs, err := agent.GetAllTeamMessages(input.Name, 0); err == nil {
+		for _, msg := range msgs {
+			eventType := "message"
+			switch msg.Type {
+			case agent.MsgTaskCompleted:
+				eventType = "task_completed"
+			case agent.MsgTaskFailed:
+				eventType = "task_failed"
+			case agent.MsgProgress:
+				eventType = "progress"
+			case agent.MsgHelpRequest:
+				eventType = "help_request"
+			case agent.MsgDiscovery:
+				eventType = "discovery"
+			}
+			summary := truncateMCP(msg.Content, 150)
+			if msg.To != "" {
+				summary = fmt.Sprintf("[to %s] %s", msg.To, summary)
+			}
+			events = append(events, activityEvent{
+				Timestamp: msg.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				Type:      eventType,
+				Agent:     msg.From,
+				Summary:   summary,
+				TaskID:    msg.TaskID,
+			})
+		}
+	}
+
+	// Source 2: Task lifecycle events
+	if tasks, err := agent.ListTasks(input.Name, "", ""); err == nil {
+		for _, t := range tasks {
+			// Task created
+			events = append(events, activityEvent{
+				Timestamp: t.CreatedAt.Format("2006-01-02T15:04:05Z"),
+				Type:      "task_created",
+				Agent:     t.Owner,
+				Summary:   fmt.Sprintf("Task #%d created: %s", t.ID, t.Subject),
+				TaskID:    t.ID,
+			})
+			// Task started
+			if t.StartedAt != nil {
+				events = append(events, activityEvent{
+					Timestamp: t.StartedAt.Format("2006-01-02T15:04:05Z"),
+					Type:      "task_started",
+					Agent:     t.Owner,
+					Summary:   fmt.Sprintf("Task #%d started: %s", t.ID, t.Subject),
+					TaskID:    t.ID,
+				})
+			}
+			// Task completed
+			if t.CompletedAt != nil && t.Status == agent.TaskCompleted {
+				events = append(events, activityEvent{
+					Timestamp: t.CompletedAt.Format("2006-01-02T15:04:05Z"),
+					Type:      "task_completed",
+					Agent:     t.Owner,
+					Summary:   fmt.Sprintf("Task #%d completed: %s", t.ID, t.Subject),
+					TaskID:    t.ID,
+				})
+			}
+			// Task failed
+			if t.CompletedAt != nil && t.Status == agent.TaskFailed {
+				events = append(events, activityEvent{
+					Timestamp: t.CompletedAt.Format("2006-01-02T15:04:05Z"),
+					Type:      "task_failed",
+					Agent:     t.Owner,
+					Summary:   fmt.Sprintf("Task #%d failed: %s", t.ID, t.Subject),
+					TaskID:    t.ID,
+				})
+			}
+		}
+	}
+
+	// Sort all events by timestamp descending
+	sort.Slice(events, func(i, j int) bool {
+		return events[i].Timestamp > events[j].Timestamp
+	})
+
+	// Apply limit
+	if len(events) > limit {
+		events = events[:limit]
+	}
+
+	return nil, teamActivityOutput{
+		Team:   input.Name,
+		Events: events,
+	}, nil
+}
+
 func registerAgentTools(server *mcpsdk.Server) {
 	mcpServer = server
 
@@ -732,6 +925,11 @@ func registerAgentTools(server *mcpsdk.Server) {
 		Name:        "team_subscribe",
 		Description: "Subscribe to agent task notifications for a team. This tool BLOCKS until a notification arrives or timeout is reached. Designed for use with background Task agents: the agent calls team_subscribe and blocks waiting; when a notification arrives, the tool returns and the agent completes, triggering a <task-notification> that wakes the main session. Prefer this over team_watch for programmatic notification delivery.",
 	}, teamSubscribeHandler)
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "team_activity",
+		Description: "Get a unified activity timeline for a team, combining messages and task lifecycle events. Returns events sorted by time (newest first). Use limit parameter to control how many events to return (default 20, max 100).",
+	}, teamActivityHandler)
 }
 
 // -- test_sampling --

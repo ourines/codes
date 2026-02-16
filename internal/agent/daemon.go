@@ -158,13 +158,15 @@ func (d *Daemon) Run(ctx context.Context) error {
 			// Execute the task
 			state.Status = AgentRunning
 			state.CurrentTask = task.ID
-			SaveAgentState(state)
+			state.CurrentTaskSubject = task.Subject
+			d.updateActivity(state, fmt.Sprintf("executing task #%d: %s", task.ID, task.Subject))
 
 			d.executeTask(ctx, task, state)
 
 			state.Status = AgentIdle
 			state.CurrentTask = 0
-			SaveAgentState(state)
+			state.CurrentTaskSubject = ""
+			d.updateActivity(state, "idle - waiting for tasks")
 		}
 	}
 }
@@ -207,6 +209,11 @@ func (d *Daemon) processMessages(ctx context.Context, state *AgentState) {
 			MarkRead(d.TeamName, msg.ID)
 			continue
 		}
+		// Skip informational messages (progress updates and discoveries are notification-only)
+		if msg.Type == MsgProgress || msg.Type == MsgDiscovery {
+			MarkRead(d.TeamName, msg.ID)
+			continue
+		}
 		// Skip broadcast messages — only respond to direct messages
 		// Broadcasts are informational (e.g. "agent online"); responding creates message storms.
 		if msg.To == "" {
@@ -217,6 +224,8 @@ func (d *Daemon) processMessages(ctx context.Context, state *AgentState) {
 
 		d.logger.Printf("message from %s: %s", msg.From, truncate(msg.Content, 80))
 		MarkRead(d.TeamName, msg.ID)
+
+		d.updateActivity(state, fmt.Sprintf("processing message from %s", msg.From))
 
 		// Build a prompt that includes the message context
 		prompt := fmt.Sprintf(
@@ -331,6 +340,8 @@ func (d *Daemon) executeTask(ctx context.Context, task *Task, state *AgentState)
 	// Transition to running
 	_, err := UpdateTask(d.TeamName, task.ID, func(t *Task) error {
 		t.Status = TaskRunning
+		now := time.Now()
+		t.StartedAt = &now
 		return nil
 	})
 	if err != nil {
@@ -509,6 +520,13 @@ func truncate(s string, maxLen int) string {
 		return s
 	}
 	return s[:maxLen-3] + "..."
+}
+
+// updateActivity updates the agent state's activity description and persists it.
+func (d *Daemon) updateActivity(state *AgentState, activity string) {
+	state.Activity = activity
+	state.UpdatedAt = time.Now()
+	SaveAgentState(state)
 }
 
 // sendWebhookNotifications sends notifications to all configured webhooks.

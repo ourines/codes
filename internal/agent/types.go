@@ -67,6 +67,7 @@ type Task struct {
 	Error       string       `json:"error,omitempty"`
 	CreatedAt   time.Time    `json:"createdAt"`
 	UpdatedAt   time.Time    `json:"updatedAt"`
+	StartedAt   *time.Time   `json:"startedAt,omitempty"`
 	CompletedAt *time.Time   `json:"completedAt,omitempty"`
 }
 
@@ -78,6 +79,9 @@ const (
 	MsgTaskCompleted MessageType = "task_completed"  // auto-report: task done
 	MsgTaskFailed    MessageType = "task_failed"     // auto-report: task failed
 	MsgSystem        MessageType = "system"          // system commands (__stop__, etc.)
+	MsgProgress      MessageType = "progress"        // intermediate progress update
+	MsgHelpRequest   MessageType = "help_request"    // request for help
+	MsgDiscovery     MessageType = "discovery"       // share a finding/discovery
 )
 
 // Message represents a message between agents.
@@ -94,17 +98,19 @@ type Message struct {
 
 // AgentState represents the on-disk state of a running agent daemon.
 type AgentState struct {
-	Name         string      `json:"name"`
-	Team         string      `json:"team"`
-	PID          int         `json:"pid"`
-	Status       AgentStatus `json:"status"`
-	CurrentTask  int         `json:"currentTask,omitempty"`
-	SessionID    string      `json:"sessionId,omitempty"` // persistent Claude session for message handling
-	StartedAt    time.Time   `json:"startedAt"`
-	UpdatedAt    time.Time   `json:"updatedAt"`
-	RestartCount int         `json:"restartCount,omitempty"` // number of times daemon has been restarted
-	LastCrash    *time.Time  `json:"lastCrash,omitempty"`    // timestamp of last crash/unexpected exit
-	Supervised   bool        `json:"supervised,omitempty"`   // whether running under supervisor
+	Name               string      `json:"name"`
+	Team               string      `json:"team"`
+	PID                int         `json:"pid"`
+	Status             AgentStatus `json:"status"`
+	CurrentTask        int         `json:"currentTask,omitempty"`
+	CurrentTaskSubject string      `json:"currentTaskSubject,omitempty"` // cached subject of current task
+	Activity           string      `json:"activity,omitempty"`          // human-readable activity description
+	SessionID          string      `json:"sessionId,omitempty"`         // persistent Claude session for message handling
+	StartedAt          time.Time   `json:"startedAt"`
+	UpdatedAt          time.Time   `json:"updatedAt"`
+	RestartCount       int         `json:"restartCount,omitempty"` // number of times daemon has been restarted
+	LastCrash          *time.Time  `json:"lastCrash,omitempty"`    // timestamp of last crash/unexpected exit
+	Supervised         bool        `json:"supervised,omitempty"`   // whether running under supervisor
 }
 
 

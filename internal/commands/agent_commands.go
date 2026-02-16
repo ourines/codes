@@ -419,9 +419,13 @@ func RunAgentStatus(teamName string) {
 		state, _ := agent.GetAgentState(teamName, m.Name)
 		status := "not started"
 		if state != nil {
-			status = string(state.Status)
-			if state.CurrentTask > 0 {
-				status += fmt.Sprintf(" (task #%d)", state.CurrentTask)
+			if state.Activity != "" {
+				status = state.Activity
+			} else {
+				status = string(state.Status)
+				if state.CurrentTask > 0 {
+					status += fmt.Sprintf(" (task #%d)", state.CurrentTask)
+				}
 			}
 		}
 		fmt.Printf("  %-15s %s\n", m.Name, status)
@@ -439,6 +443,14 @@ func RunAgentStatus(teamName string) {
 	} {
 		if c := counts[s]; c > 0 {
 			fmt.Printf("  %-12s %d\n", s, c)
+		}
+	}
+
+	// Show running tasks with duration
+	for _, t := range tasks {
+		if t.Status == agent.TaskRunning && t.StartedAt != nil {
+			dur := time.Since(*t.StartedAt).Truncate(time.Second)
+			fmt.Printf("\n  Running: #%d %s (owner: %s, duration: %s)\n", t.ID, t.Subject, t.Owner, dur)
 		}
 	}
 }
