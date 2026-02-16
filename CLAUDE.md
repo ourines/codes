@@ -39,7 +39,7 @@ The root command dynamically selects behavior:
 | `internal/remote` | SSH/SCP operations, remote codes installation, profile sync |
 | `internal/agent` | Agent team management: daemon lifecycle, task execution, message passing, Claude subprocess orchestration |
 | `internal/stats` | Cost tracking: JSONL session parsing, token aggregation, caching, time-range filtering |
-| `internal/mcp` | MCP server exposing 40 tools over stdio transport (10 config + 22 agent + 4 stats + 4 workflow tools) |
+| `internal/mcp` | MCP server exposing 41 tools over stdio transport (10 config + 23 agent + 4 stats + 4 workflow tools) |
 | `internal/commands` | Cobra command definitions (`cobra.go`) + implementations (`commands.go`) |
 | `internal/output` | JSON mode wrapper (`output.JSONMode` flag) |
 | `internal/ui` | Styled CLI text output helpers |
@@ -115,13 +115,13 @@ PID tracking via `/tmp/codes-session-<id>.pid`. `RefreshStatus()` polls process 
 
 ### MCP Server (`internal/mcp`)
 
-40 tools registered via `mcpsdk.AddTool()` over stdio transport:
+41 tools registered via `mcpsdk.AddTool()` over stdio transport:
 
 **Config tools (10):** `list_projects`, `add_project`, `remove_project`, `list_profiles`, `switch_profile`, `get_project_info`, `list_remotes`, `add_remote`, `remove_remote`, `sync_remote`
 
 **Stats tools (4):** `stats_summary`, `stats_by_project`, `stats_by_model`, `stats_refresh`
 
-**Agent tools (22):** `team_create`, `team_delete`, `team_list`, `team_get`, `team_status`, `team_start_all`, `team_stop_all`, `agent_add`, `agent_remove`, `agent_list`, `agent_start`, `agent_stop`, `task_create`, `task_update`, `task_list`, `task_get`, `message_send`, `message_list`, `message_mark_read`, `test_sampling`, `team_watch`, `team_subscribe`
+**Agent tools (23):** `team_create`, `team_delete`, `team_list`, `team_get`, `team_status`, `team_start_all`, `team_stop_all`, `team_activity`, `agent_add`, `agent_remove`, `agent_list`, `agent_start`, `agent_stop`, `task_create`, `task_update`, `task_list`, `task_get`, `message_send`, `message_list`, `message_mark_read`, `test_sampling`, `team_watch`, `team_subscribe`
 
 **Workflow tools (4):** `workflow_list`, `workflow_get`, `workflow_run`, `workflow_create`
 
