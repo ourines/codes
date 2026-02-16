@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"codes/internal/config"
+	"codes/internal/httpserver"
 	mcpserver "codes/internal/mcp"
 	"codes/internal/output"
 	"codes/internal/remote"
@@ -1923,7 +1924,14 @@ func RunProjectAdd2(args []string, remoteName string) {
 }
 
 // RunServe starts the MCP server mode.
-func RunServe() {
+func RunServe(httpAddr string) {
+	// If HTTP address provided, start HTTP server
+	if httpAddr != "" {
+		RunHTTPServer(httpAddr)
+		return
+	}
+
+	// Otherwise, start stdio MCP server
 	if err := mcpserver.RunServer(); err != nil {
 		// EOF is expected when client disconnects
 		if err.Error() != "server is closing: EOF" {
@@ -2310,5 +2318,37 @@ func RunRemoteSSH(name string, project string) {
 
 	if err := remote.RunSSHInteractive(host, cmd); err != nil {
 		ui.ShowError("SSH session failed", err)
+	}
+}
+
+// RunHTTPServer starts the HTTP API server.
+func RunHTTPServer(addr string) {
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		ui.ShowError("Failed to load config", err)
+		os.Exit(1)
+	}
+
+	// Use tokens from config if available, otherwise require at least one token
+	tokens := cfg.HTTPTokens
+	if len(tokens) == 0 {
+		ui.ShowError("HTTP server requires tokens", fmt.Errorf("no tokens configured in config.json (set 'httpTokens' field)"))
+		os.Exit(1)
+	}
+
+	// Override bind address if provided in config
+	if cfg.HTTPBind != "" && addr == "" {
+		addr = cfg.HTTPBind
+	}
+
+	// Default to :8080 if not specified
+	if addr == "" {
+		addr = ":8080"
+	}
+
+	server := httpserver.NewHTTPServer(tokens, Version)
+	if err := server.ListenAndServe(addr); err != nil {
+		ui.ShowError("HTTP server error", err)
+		os.Exit(1)
 	}
 }

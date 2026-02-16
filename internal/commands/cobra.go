@@ -429,10 +429,15 @@ Usage examples:
 var ServeCmd = &cobra.Command{
 	Use:   "serve",
 	Short: "Start MCP server mode",
-	Long:  "Start codes as an MCP server over stdio for integration with Claude Code",
+	Long:  "Start codes as an MCP server over stdio for integration with Claude Code, or as HTTP API server",
 	Run: func(cmd *cobra.Command, args []string) {
-		RunServe()
+		httpAddr, _ := cmd.Flags().GetString("http")
+		RunServe(httpAddr)
 	},
+}
+
+func init() {
+	ServeCmd.Flags().String("http", "", "HTTP bind address (e.g., ':8080'). If empty, runs stdio MCP server")
 }
 
 // RemoteCmd represents the remote command
