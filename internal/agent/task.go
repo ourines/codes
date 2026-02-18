@@ -211,6 +211,28 @@ func CancelTask(teamName string, taskID int) (*Task, error) {
 	})
 }
 
+// RedirectTask cancels a running task and creates a new one with updated
+// instructions, inheriting the original task's owner, priority, project, and
+// working directory. The new task is automatically assigned to the same agent.
+func RedirectTask(teamName string, taskID int, newInstructions string, newSubject string) (*Task, error) {
+	oldTask, err := CancelTask(teamName, taskID)
+	if err != nil {
+		return nil, fmt.Errorf("cancel task %d: %w", taskID, err)
+	}
+
+	subject := newSubject
+	if subject == "" {
+		subject = oldTask.Subject
+	}
+
+	newTask, err := CreateTask(teamName, subject, newInstructions, oldTask.Owner, nil, oldTask.Priority, oldTask.Project, oldTask.WorkDir)
+	if err != nil {
+		return nil, fmt.Errorf("create redirect task: %w", err)
+	}
+
+	return newTask, nil
+}
+
 // IsTaskBlocked checks if a task's dependencies are all completed.
 func IsTaskBlocked(teamName string, task *Task) (bool, error) {
 	if len(task.BlockedBy) == 0 {

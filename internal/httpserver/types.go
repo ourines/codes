@@ -4,11 +4,12 @@ import "time"
 
 // DispatchRequest represents the incoming dispatch API request
 type DispatchRequest struct {
-	Text     string `json:"text"`               // User's request text
-	Channel  string `json:"channel,omitempty"`  // Source channel (e.g., "telegram", "slack")
-	ChatID   string `json:"chat_id,omitempty"`  // Channel-specific chat/user ID
-	Project  string `json:"project,omitempty"`  // Target project name
-	Priority string `json:"priority,omitempty"` // Task priority: "high", "normal", "low"
+	Text        string `json:"text"`                  // User's request text
+	Channel     string `json:"channel,omitempty"`     // Source channel (e.g., "telegram", "slack")
+	ChatID      string `json:"chat_id,omitempty"`     // Channel-specific chat/user ID
+	Project     string `json:"project,omitempty"`     // Target project name
+	Priority    string `json:"priority,omitempty"`    // Task priority: "high", "normal", "low"
+	CallbackURL string `json:"callback_url,omitempty"` // URL to POST result when task completes or fails
 }
 
 // DispatchResponse represents the dispatch API response

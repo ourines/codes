@@ -39,7 +39,7 @@ The root command dynamically selects behavior:
 | `internal/remote` | SSH/SCP operations, remote codes installation, profile sync |
 | `internal/agent` | Agent team management: daemon lifecycle, task execution, message passing, Claude subprocess orchestration |
 | `internal/stats` | Cost tracking: JSONL session parsing, token aggregation, caching, time-range filtering |
-| `internal/mcp` | MCP server exposing 41 tools over stdio transport (10 config + 23 agent + 4 stats + 4 workflow tools) |
+| `internal/mcp` | MCP server exposing 42 tools over stdio transport (10 config + 24 agent + 4 stats + 4 workflow tools) |
 | `internal/commands` | Cobra command definitions (`cobra.go`) + implementations (`commands.go`) |
 | `internal/output` | JSON mode wrapper (`output.JSONMode` flag) |
 | `internal/ui` | Styled CLI text output helpers |
@@ -115,13 +115,13 @@ PID tracking via `/tmp/codes-session-<id>.pid`. `RefreshStatus()` polls process 
 
 ### MCP Server (`internal/mcp`)
 
-41 tools registered via `mcpsdk.AddTool()` over stdio transport:
+42 tools registered via `mcpsdk.AddTool()` over stdio transport:
 
 **Config tools (10):** `list_projects`, `add_project`, `remove_project`, `list_profiles`, `switch_profile`, `get_project_info`, `list_remotes`, `add_remote`, `remove_remote`, `sync_remote`
 
 **Stats tools (4):** `stats_summary`, `stats_by_project`, `stats_by_model`, `stats_refresh`
 
-**Agent tools (23):** `team_create`, `team_delete`, `team_list`, `team_get`, `team_status`, `team_start_all`, `team_stop_all`, `team_activity`, `agent_add`, `agent_remove`, `agent_list`, `agent_start`, `agent_stop`, `task_create`, `task_update`, `task_list`, `task_get`, `message_send`, `message_list`, `message_mark_read`, `test_sampling`, `team_watch`, `team_subscribe`
+**Agent tools (24):** `team_create`, `team_delete`, `team_list`, `team_get`, `team_status`, `team_start_all`, `team_stop_all`, `team_activity`, `agent_add`, `agent_remove`, `agent_list`, `agent_start`, `agent_stop`, `task_create`, `task_update`, `task_redirect`, `task_list`, `task_get`, `message_send`, `message_list`, `message_mark_read`, `test_sampling`, `team_watch`, `team_subscribe`
 
 **Workflow tools (4):** `workflow_list`, `workflow_get`, `workflow_run`, `workflow_create`
 
@@ -152,8 +152,12 @@ Team (TeamConfig)
 Each agent runs as an independent process (`codes agent run <team> <agent>`), polling at 3-second intervals:
 
 1. **Check stop signal**: Read messages for `__stop__` command
-2. **Process messages**: Chat messages routed to Claude subprocess, responses sent back to sender
-3. **Find and execute tasks**: Auto-claim pending tasks or execute assigned tasks via Claude subprocess
+2. **Check async task completion**: If a task goroutine finished, handle the result
+3. **Detect external cancellation**: Poll task file to detect `cancelled` status → terminate Claude subprocess via context cancellation
+4. **Process messages**: Chat messages routed to Claude subprocess (skipped while a task is running)
+5. **Find and start tasks**: Auto-claim pending tasks and launch in background goroutine
+
+Tasks execute asynchronously in a goroutine, allowing the main loop to continue checking for stop signals and task cancellation every 3 seconds. External cancellation (via `task_update` or `task_redirect`) triggers `context.Cancel()` which sends SIGTERM to the Claude subprocess.
 
 State tracked in `AgentState` with PID, status (`idle`/`running`/`stopping`/`stopped`), and persistent session ID.
 

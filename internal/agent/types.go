@@ -63,6 +63,7 @@ type Task struct {
 	BlockedBy   []int        `json:"blockedBy,omitempty"`
 	SessionID   string       `json:"sessionId,omitempty"`
 	Adapter     string       `json:"adapter,omitempty"`   // CLI adapter to use (default: "claude")
+	CallbackURL string       `json:"callbackUrl,omitempty"` // URL to POST result when task completes/fails
 	Result      string       `json:"result,omitempty"`
 	Error       string       `json:"error,omitempty"`
 	CreatedAt   time.Time    `json:"createdAt"`

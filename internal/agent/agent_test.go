@@ -1,6 +1,10 @@
 package agent
 
 import (
+	"encoding/json"
+	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"testing"
@@ -17,6 +21,11 @@ func setupTestDir(t *testing.T) (cleanup func()) {
 	return func() {
 		teamsBaseDirFunc = origFunc
 	}
+}
+
+// newTestLogger returns a logger that writes to stderr for test output.
+func newTestLogger() *log.Logger {
+	return log.New(os.Stderr, "[test] ", log.LstdFlags)
 }
 
 func TestCreateAndGetTeam(t *testing.T) {
@@ -479,5 +488,297 @@ func TestTaskDefaultPriority(t *testing.T) {
 	}
 	if task2.Priority != PriorityHigh {
 		t.Errorf("Explicit priority = %s, want %s", task2.Priority, PriorityHigh)
+	}
+}
+
+func TestRedirectTask(t *testing.T) {
+	cleanup := setupTestDir(t)
+	defer cleanup()
+
+	CreateTeam("redirect-team", "", "")
+
+	// Create and assign a task
+	task, err := CreateTask("redirect-team", "Original task", "do original work", "worker1", nil, PriorityHigh, "myproject", "/tmp/work")
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	// Transition to running
+	UpdateTask("redirect-team", task.ID, func(t *Task) error {
+		t.Status = TaskRunning
+		return nil
+	})
+
+	// Redirect the task
+	newTask, err := RedirectTask("redirect-team", task.ID, "new instructions for the work", "")
+	if err != nil {
+		t.Fatalf("RedirectTask: %v", err)
+	}
+
+	// Verify old task is cancelled
+	oldTask, _ := GetTask("redirect-team", task.ID)
+	if oldTask.Status != TaskCancelled {
+		t.Errorf("Old task status = %s, want %s", oldTask.Status, TaskCancelled)
+	}
+
+	// Verify new task inherits properties
+	if newTask.Owner != "worker1" {
+		t.Errorf("New task owner = %q, want %q", newTask.Owner, "worker1")
+	}
+	if newTask.Priority != PriorityHigh {
+		t.Errorf("New task priority = %s, want %s", newTask.Priority, PriorityHigh)
+	}
+	if newTask.Project != "myproject" {
+		t.Errorf("New task project = %q, want %q", newTask.Project, "myproject")
+	}
+	if newTask.WorkDir != "/tmp/work" {
+		t.Errorf("New task workdir = %q, want %q", newTask.WorkDir, "/tmp/work")
+	}
+	if newTask.Description != "new instructions for the work" {
+		t.Errorf("New task description = %q, want %q", newTask.Description, "new instructions for the work")
+	}
+	// Subject should be inherited
+	if newTask.Subject != "Original task" {
+		t.Errorf("New task subject = %q, want %q (inherited)", newTask.Subject, "Original task")
+	}
+	// Status should be assigned (since owner is set)
+	if newTask.Status != TaskAssigned {
+		t.Errorf("New task status = %s, want %s", newTask.Status, TaskAssigned)
+	}
+}
+
+func TestRedirectTaskWithNewSubject(t *testing.T) {
+	cleanup := setupTestDir(t)
+	defer cleanup()
+
+	CreateTeam("redirect-subj", "", "")
+
+	task, _ := CreateTask("redirect-subj", "Old subject", "old desc", "worker1", nil, "", "", "")
+	UpdateTask("redirect-subj", task.ID, func(t *Task) error {
+		t.Status = TaskRunning
+		return nil
+	})
+
+	newTask, err := RedirectTask("redirect-subj", task.ID, "new desc", "New subject")
+	if err != nil {
+		t.Fatalf("RedirectTask: %v", err)
+	}
+	if newTask.Subject != "New subject" {
+		t.Errorf("Subject = %q, want %q", newTask.Subject, "New subject")
+	}
+}
+
+func TestRedirectTaskCannotRedirectCompleted(t *testing.T) {
+	cleanup := setupTestDir(t)
+	defer cleanup()
+
+	CreateTeam("redirect-fail", "", "")
+
+	task, _ := CreateTask("redirect-fail", "Done task", "", "worker1", nil, "", "", "")
+	AssignTask("redirect-fail", task.ID, "worker1")
+	CompleteTask("redirect-fail", task.ID, "all done")
+
+	_, err := RedirectTask("redirect-fail", task.ID, "new work", "")
+	if err == nil {
+		t.Error("RedirectTask on completed task should fail")
+	}
+}
+
+func TestCheckTaskCancellation(t *testing.T) {
+	cleanup := setupTestDir(t)
+	defer cleanup()
+
+	CreateTeam("cancel-team", "", "")
+
+	task, _ := CreateTask("cancel-team", "Cancel me", "", "worker1", nil, "", "", "")
+	UpdateTask("cancel-team", task.ID, func(t *Task) error {
+		t.Status = TaskRunning
+		return nil
+	})
+
+	// Simulate daemon with a running task
+	cancelled := false
+	d := &Daemon{
+		TeamName:    "cancel-team",
+		AgentName:   "worker1",
+		runningTask: task.ID,
+		taskCancel:  func() { cancelled = true },
+		logger:      newTestLogger(),
+	}
+
+	// Task is running — checkTaskCancellation should NOT cancel
+	d.checkTaskCancellation()
+	if cancelled {
+		t.Error("Should not cancel a running task")
+	}
+
+	// Cancel the task externally
+	CancelTask("cancel-team", task.ID)
+
+	// Now checkTaskCancellation should trigger cancel
+	d.checkTaskCancellation()
+	if !cancelled {
+		t.Error("Should have called taskCancel after task was cancelled externally")
+	}
+}
+
+func TestHandleTaskResultCancelled(t *testing.T) {
+	cleanup := setupTestDir(t)
+	defer cleanup()
+
+	CreateTeam("result-cancel", "", "")
+
+	task, _ := CreateTask("result-cancel", "Cancelled task", "", "worker1", nil, "", "", "")
+	UpdateTask("result-cancel", task.ID, func(t *Task) error {
+		t.Status = TaskRunning
+		return nil
+	})
+
+	// Cancel externally
+	CancelTask("result-cancel", task.ID)
+
+	d := &Daemon{
+		TeamName:  "result-cancel",
+		AgentName: "worker1",
+		logger:    newTestLogger(),
+	}
+
+	state := &AgentState{
+		Name:   "worker1",
+		Team:   "result-cancel",
+		Status: AgentRunning,
+	}
+
+	// Simulate task returning with a partial result after cancellation
+	res := taskResult{
+		task:   task,
+		result: &ClaudeResult{Result: "partial work done"},
+		err:    nil,
+	}
+
+	d.handleTaskResult(res, state)
+
+	// Clean up notification file written by writeNotification to avoid
+	// interfering with MCP monitor E2E tests that scan ~/.codes/notifications/.
+	if home, err := os.UserHomeDir(); err == nil {
+		os.Remove(filepath.Join(home, ".codes", "notifications", "result-cancel__1.json"))
+	}
+
+	// Verify partial result was saved
+	updated, _ := GetTask("result-cancel", task.ID)
+	if updated.Result == "" {
+		t.Error("Expected partial result to be saved")
+	}
+	if updated.Status != TaskCancelled {
+		t.Errorf("Status = %s, want %s", updated.Status, TaskCancelled)
+	}
+
+	// Verify state was reset to idle
+	if state.Status != AgentIdle {
+		t.Errorf("Agent status = %s, want %s", state.Status, AgentIdle)
+	}
+	if state.CurrentTask != 0 {
+		t.Errorf("CurrentTask = %d, want 0", state.CurrentTask)
+	}
+}
+
+func TestSendCallbackSuccess(t *testing.T) {
+	var received taskNotification
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			t.Errorf("expected POST, got %s", r.Method)
+		}
+		if ct := r.Header.Get("Content-Type"); ct != "application/json" {
+			t.Errorf("expected Content-Type application/json, got %s", ct)
+		}
+		if err := json.NewDecoder(r.Body).Decode(&received); err != nil {
+			t.Errorf("decode body: %v", err)
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer srv.Close()
+
+	d := &Daemon{
+		TeamName:  "cb-team",
+		AgentName: "worker",
+		logger:    newTestLogger(),
+	}
+
+	n := taskNotification{
+		Team:    "cb-team",
+		TaskID:  42,
+		Subject: "Do something",
+		Status:  "completed",
+		Agent:   "worker",
+		Result:  "all done",
+	}
+	d.sendCallback(srv.URL, n)
+
+	if received.TaskID != 42 {
+		t.Errorf("callback taskId = %d, want 42", received.TaskID)
+	}
+	if received.Status != "completed" {
+		t.Errorf("callback status = %s, want completed", received.Status)
+	}
+	if received.Result != "all done" {
+		t.Errorf("callback result = %q, want 'all done'", received.Result)
+	}
+}
+
+func TestSendCallbackNonOKStatus(t *testing.T) {
+	// Non-2xx response should be logged but not panic or return error
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	d := &Daemon{
+		TeamName:  "cb-team",
+		AgentName: "worker",
+		logger:    newTestLogger(),
+	}
+	// Should not panic
+	d.sendCallback(srv.URL, taskNotification{Team: "cb-team", TaskID: 1, Status: "failed"})
+}
+
+func TestSendCallbackUnreachable(t *testing.T) {
+	d := &Daemon{
+		TeamName:  "cb-team",
+		AgentName: "worker",
+		logger:    newTestLogger(),
+	}
+	// Unreachable URL — should not panic, just log
+	d.sendCallback("http://127.0.0.1:1", taskNotification{Team: "cb-team", TaskID: 1, Status: "completed"})
+}
+
+func TestTaskCallbackURLPersisted(t *testing.T) {
+	cleanup := setupTestDir(t)
+	defer cleanup()
+
+	CreateTeam("cb-persist", "", "")
+
+	task, err := CreateTask("cb-persist", "Test callback", "", "worker1", nil, "", "", "")
+	if err != nil {
+		t.Fatalf("CreateTask: %v", err)
+	}
+
+	updated, err := UpdateTask("cb-persist", task.ID, func(t *Task) error {
+		t.CallbackURL = "https://example.com/callback"
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("UpdateTask: %v", err)
+	}
+	if updated.CallbackURL != "https://example.com/callback" {
+		t.Errorf("CallbackURL = %q, want %q", updated.CallbackURL, "https://example.com/callback")
+	}
+
+	// Verify it survives a round-trip read
+	loaded, err := GetTask("cb-persist", task.ID)
+	if err != nil {
+		t.Fatalf("GetTask: %v", err)
+	}
+	if loaded.CallbackURL != "https://example.com/callback" {
+		t.Errorf("Loaded CallbackURL = %q, want %q", loaded.CallbackURL, "https://example.com/callback")
 	}
 }

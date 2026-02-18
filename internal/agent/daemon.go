@@ -1,12 +1,14 @@
 package agent
 
 import (
+	"bytes"
 	"codes/internal/config"
 	"codes/internal/notify"
 	"context"
 	"encoding/json"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -25,6 +27,18 @@ type Daemon struct {
 	pollInterval time.Duration
 	logger       *log.Logger
 	msgSessionID string // established message session ID (set after first response)
+
+	// Async task execution state
+	taskCancel  context.CancelFunc // cancels the currently running task's context
+	taskDone    chan taskResult     // receives result when async task completes
+	runningTask int                // ID of the currently running task (0 = none)
+}
+
+// taskResult carries the outcome of an asynchronous task execution.
+type taskResult struct {
+	task   *Task
+	result *ClaudeResult
+	err    error
 }
 
 // NewDaemon creates a new agent daemon.
@@ -134,39 +148,48 @@ func (d *Daemon) Run(ctx context.Context) error {
 	for {
 		select {
 		case <-ctx.Done():
+			d.cancelRunningTask()
+			d.drainRunningTask(state)
 			return ctx.Err()
 		case <-ticker.C:
 			// 1. Check for stop signal
 			if d.shouldStop() {
 				d.logger.Println("received stop signal")
+				d.cancelRunningTask()
+				d.drainRunningTask(state)
 				return nil
 			}
 
-			// 2. Process incoming chat messages
-			d.processMessages(ctx, state)
-
-			// 3. Look for an assigned task to execute
-			task, err := d.findNextTask()
-			if err != nil {
-				d.logger.Printf("error finding task: %v", err)
-				continue
+			// 2. Check if async task has completed
+			if d.taskDone != nil {
+				select {
+				case res := <-d.taskDone:
+					d.handleTaskResult(res, state)
+					d.taskDone = nil
+					d.taskCancel = nil
+					d.runningTask = 0
+				default:
+					// Task still running, check for external cancellation
+					d.checkTaskCancellation()
+				}
 			}
-			if task == nil {
-				continue
+
+			// 3. Process incoming chat messages (only when no task is running)
+			if d.taskDone == nil {
+				d.processMessages(ctx, state)
 			}
 
-			// Execute the task
-			state.Status = AgentRunning
-			state.CurrentTask = task.ID
-			state.CurrentTaskSubject = task.Subject
-			d.updateActivity(state, fmt.Sprintf("executing task #%d: %s", task.ID, task.Subject))
-
-			d.executeTask(ctx, task, state)
-
-			state.Status = AgentIdle
-			state.CurrentTask = 0
-			state.CurrentTaskSubject = ""
-			d.updateActivity(state, "idle - waiting for tasks")
+			// 4. Find and start next task (only when no task is running)
+			if d.taskDone == nil {
+				task, err := d.findNextTask()
+				if err != nil {
+					d.logger.Printf("error finding task: %v", err)
+					continue
+				}
+				if task != nil {
+					d.startTaskAsync(ctx, task, state)
+				}
+			}
 		}
 	}
 }
@@ -332,11 +355,9 @@ func (d *Daemon) findNextTask() (*Task, error) {
 	return nil, nil
 }
 
-// executeTask runs a Claude subprocess for the given task and auto-reports
-// the result back to the team lead via messages.
-func (d *Daemon) executeTask(ctx context.Context, task *Task, state *AgentState) {
-	d.logger.Printf("executing task %d: %s", task.ID, task.Subject)
-
+// startTaskAsync launches a task in a background goroutine. The main loop
+// continues ticking and can detect external cancellation while the task runs.
+func (d *Daemon) startTaskAsync(ctx context.Context, task *Task, state *AgentState) {
 	// Transition to running
 	_, err := UpdateTask(d.TeamName, task.ID, func(t *Task) error {
 		t.Status = TaskRunning
@@ -349,6 +370,28 @@ func (d *Daemon) executeTask(ctx context.Context, task *Task, state *AgentState)
 		return
 	}
 
+	taskCtx, cancel := context.WithCancel(ctx)
+	d.taskCancel = cancel
+	d.runningTask = task.ID
+	d.taskDone = make(chan taskResult, 1)
+
+	// Update state
+	state.Status = AgentRunning
+	state.CurrentTask = task.ID
+	state.CurrentTaskSubject = task.Subject
+	d.updateActivity(state, fmt.Sprintf("executing task #%d: %s", task.ID, task.Subject))
+
+	d.logger.Printf("executing task %d: %s", task.ID, task.Subject)
+
+	go func() {
+		result, err := d.runTask(taskCtx, task)
+		d.taskDone <- taskResult{task: task, result: result, err: err}
+	}()
+}
+
+// runTask executes a Claude subprocess for the given task. It is called from a
+// goroutine and must not modify daemon state directly.
+func (d *Daemon) runTask(ctx context.Context, task *Task) (*ClaudeResult, error) {
 	// Build prompt
 	prompt := task.Subject
 	if task.Description != "" {
@@ -392,35 +435,103 @@ func (d *Daemon) executeTask(ctx context.Context, task *Task, state *AgentState)
 		adapterName = "claude" // Default to claude
 	}
 
-	var result *ClaudeResult
-	result, err = RunWithAdapter(ctx, adapterName, opts)
+	return RunWithAdapter(ctx, adapterName, opts)
+}
 
+// checkTaskCancellation polls the task file to detect external cancellation
+// (e.g. via MCP task_update setting status to cancelled).
+func (d *Daemon) checkTaskCancellation() {
+	if d.runningTask == 0 || d.taskCancel == nil {
+		return
+	}
+	task, err := GetTask(d.TeamName, d.runningTask)
 	if err != nil {
-		d.logger.Printf("error executing task %d with adapter %s: %v", task.ID, adapterName, err)
-		FailTask(d.TeamName, task.ID, err.Error())
-		d.reportTaskFailed(task, err.Error())
 		return
 	}
+	if task.Status == TaskCancelled {
+		d.logger.Printf("task %d cancelled externally, terminating subprocess", d.runningTask)
+		d.taskCancel() // triggers context cancellation → exec.CommandContext sends SIGTERM
+	}
+}
 
-	if result.IsError {
-		d.logger.Printf("task %d failed: %s", task.ID, result.Error)
-		FailTask(d.TeamName, task.ID, result.Error)
-		d.reportTaskFailed(task, result.Error)
+// cancelRunningTask cancels the currently running task's context, if any.
+func (d *Daemon) cancelRunningTask() {
+	if d.taskCancel != nil {
+		d.taskCancel()
+	}
+}
+
+// drainRunningTask waits for a running goroutine to finish after cancellation
+// and handles its result. Called during shutdown to avoid leaving tasks in
+// running state.
+func (d *Daemon) drainRunningTask(state *AgentState) {
+	if d.taskDone == nil {
 		return
 	}
+	res := <-d.taskDone
 
-	d.logger.Printf("task %d completed", task.ID)
-
-	// Update session ID from result if available
-	if result.SessionID != "" {
-		UpdateTask(d.TeamName, task.ID, func(t *Task) error {
-			t.SessionID = result.SessionID
-			return nil
-		})
+	// Re-read the task to see if it was already cancelled/completed externally
+	currentTask, _ := GetTask(d.TeamName, res.task.ID)
+	if currentTask != nil && currentTask.Status == TaskRunning {
+		// Task is still running on disk — mark as failed due to agent shutdown
+		FailTask(d.TeamName, res.task.ID, "agent stopped")
+		d.reportTaskFailed(res.task, "agent stopped")
 	}
 
-	CompleteTask(d.TeamName, task.ID, result.Result)
-	d.reportTaskCompleted(task, result.Result)
+	d.taskDone = nil
+	d.taskCancel = nil
+	d.runningTask = 0
+
+	state.Status = AgentIdle
+	state.CurrentTask = 0
+	state.CurrentTaskSubject = ""
+}
+
+// handleTaskResult processes the outcome of an async task execution. It
+// re-reads the task from disk to detect external cancellation.
+func (d *Daemon) handleTaskResult(res taskResult, state *AgentState) {
+	// Re-read task status from disk — it may have been cancelled externally
+	currentTask, _ := GetTask(d.TeamName, res.task.ID)
+	if currentTask != nil && currentTask.Status == TaskCancelled {
+		// Task was cancelled — save partial result if available
+		if res.result != nil && res.result.Result != "" {
+			UpdateTask(d.TeamName, res.task.ID, func(t *Task) error {
+				t.Result = "(cancelled) " + truncate(res.result.Result, 500)
+				return nil
+			})
+		}
+		d.reportTaskCancelled(res.task)
+	} else if res.err != nil {
+		errMsg := res.err.Error()
+		d.logger.Printf("error executing task %d: %v", res.task.ID, errMsg)
+		FailTask(d.TeamName, res.task.ID, errMsg)
+		d.reportTaskFailed(res.task, errMsg)
+	} else if res.result != nil && res.result.IsError {
+		d.logger.Printf("task %d failed: %s", res.task.ID, res.result.Error)
+		FailTask(d.TeamName, res.task.ID, res.result.Error)
+		d.reportTaskFailed(res.task, res.result.Error)
+	} else {
+		d.logger.Printf("task %d completed", res.task.ID)
+		// Update session ID from result if available
+		if res.result != nil && res.result.SessionID != "" {
+			UpdateTask(d.TeamName, res.task.ID, func(t *Task) error {
+				t.SessionID = res.result.SessionID
+				return nil
+			})
+		}
+		result := ""
+		if res.result != nil {
+			result = res.result.Result
+		}
+		CompleteTask(d.TeamName, res.task.ID, result)
+		d.reportTaskCompleted(res.task, result)
+	}
+
+	// Reset state to idle
+	state.Status = AgentIdle
+	state.CurrentTask = 0
+	state.CurrentTaskSubject = ""
+	d.updateActivity(state, "idle - waiting for tasks")
 }
 
 // reportTaskCompleted broadcasts a task completion report to the team.
@@ -442,6 +553,15 @@ func (d *Daemon) reportTaskFailed(task *Task, errMsg string) {
 
 	// Write notification file for external consumers
 	d.writeNotification(task, "failed", errMsg)
+}
+
+// reportTaskCancelled broadcasts a task cancellation report to the team.
+func (d *Daemon) reportTaskCancelled(task *Task) {
+	content := fmt.Sprintf("Task #%d cancelled: %s", task.ID, task.Subject)
+	BroadcastMessage(d.TeamName, d.AgentName, content)
+
+	// Write notification file for external consumers
+	d.writeNotification(task, "cancelled", "")
 }
 
 // taskNotification is the JSON structure written to ~/.codes/notifications/.
@@ -511,6 +631,33 @@ func (d *Daemon) writeNotification(task *Task, status, detail string) {
 
 	// Execute shell hook (if configured)
 	d.executeHook(status, task, detail)
+
+	// Fire callback URL if the task was dispatched with one
+	if task.CallbackURL != "" {
+		d.sendCallback(task.CallbackURL, n)
+	}
+}
+
+// sendCallback POSTs the task notification payload to the caller-provided
+// callback URL. It is best-effort: errors are logged but never fatal.
+func (d *Daemon) sendCallback(url string, n taskNotification) {
+	body, err := json.Marshal(n)
+	if err != nil {
+		d.logger.Printf("callback: marshal error: %v", err)
+		return
+	}
+
+	client := &http.Client{Timeout: 10 * time.Second}
+	resp, err := client.Post(url, "application/json", bytes.NewReader(body))
+	if err != nil {
+		d.logger.Printf("callback: POST %s error: %v", url, err)
+		return
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= 300 {
+		d.logger.Printf("callback: POST %s returned status %d", url, resp.StatusCode)
+	}
 }
 
 // truncate shortens a string to maxLen, adding "..." if truncated.
@@ -540,6 +687,8 @@ func (d *Daemon) sendWebhookNotifications(status string, task *Task) {
 	eventType := "task_completed"
 	if status == "failed" {
 		eventType = "task_failed"
+	} else if status == "cancelled" {
+		eventType = "task_cancelled"
 	}
 
 	notification := notify.Notification{
@@ -577,6 +726,8 @@ func (d *Daemon) executeHook(status string, task *Task, detail string) {
 	event := "on_task_failed"
 	if status == "completed" {
 		event = "on_task_completed"
+	} else if status == "cancelled" {
+		event = "on_task_cancelled"
 	}
 
 	scriptPath := config.GetHook(event)

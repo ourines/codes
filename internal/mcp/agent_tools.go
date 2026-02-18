@@ -321,6 +321,34 @@ func taskUpdateHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input t
 	return nil, taskUpdateOutput{Task: task}, nil
 }
 
+// -- task_redirect --
+
+type taskRedirectInput struct {
+	Team            string `json:"team" jsonschema:"Team name"`
+	TaskID          int    `json:"taskId" jsonschema:"Task ID of the running task to cancel and redirect"`
+	NewInstructions string `json:"newInstructions" jsonschema:"New task description/instructions for the replacement task"`
+	Subject         string `json:"subject,omitempty" jsonschema:"Optional new subject (inherits from original task if not provided)"`
+}
+
+type taskRedirectOutput struct {
+	CancelledTaskID int        `json:"cancelled_task_id"`
+	NewTask         *agent.Task `json:"new_task"`
+}
+
+func taskRedirectHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input taskRedirectInput) (*mcpsdk.CallToolResult, taskRedirectOutput, error) {
+	if input.Team == "" || input.TaskID == 0 || input.NewInstructions == "" {
+		return nil, taskRedirectOutput{}, fmt.Errorf("team, taskId, and newInstructions are required")
+	}
+	newTask, err := agent.RedirectTask(input.Team, input.TaskID, input.NewInstructions, input.Subject)
+	if err != nil {
+		return nil, taskRedirectOutput{}, err
+	}
+	return nil, taskRedirectOutput{
+		CancelledTaskID: input.TaskID,
+		NewTask:         newTask,
+	}, nil
+}
+
 // -- task_list --
 
 type taskListInput struct {
@@ -887,6 +915,11 @@ func registerAgentTools(server *mcpsdk.Server) {
 	}, taskUpdateHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "task_redirect",
+		Description: "Cancel a running task and create a new one with updated instructions. The new task inherits the original task's owner, priority, project, and working directory. The agent daemon will automatically detect the cancellation (within ~3 seconds), terminate the running Claude subprocess, and pick up the new task.",
+	}, taskRedirectHandler)
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "task_list",
 		Description: "List tasks in a team with optional status and owner filters. Also returns any pending agent notifications.",
 	}, taskListHandler)
@@ -917,13 +950,18 @@ func registerAgentTools(server *mcpsdk.Server) {
 	}, testSamplingHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
+		Name:        "test_progress",
+		Description: "Test MCP progress notifications: checks if client sends a progress token and attempts to send progress notifications back. Use this to verify if real-time progress updates work.",
+	}, testProgressHandler)
+
+	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "team_watch",
 		Description: "Get a bash command that monitors agent task completion notifications in real time. RECOMMENDED: after starting agents or creating tasks, call this tool and run the returned command using the Task tool (run_in_background=true, subagent_type=Bash). This provides real-time push notifications when agents complete or fail tasks, complementing the passive pending_notifications piggyback in other tool responses.",
 	}, teamWatchHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name:        "team_subscribe",
-		Description: "Subscribe to agent task notifications for a team. This tool BLOCKS until a notification arrives or timeout is reached. Designed for use with background Task agents: the agent calls team_subscribe and blocks waiting; when a notification arrives, the tool returns and the agent completes, triggering a <task-notification> that wakes the main session. Prefer this over team_watch for programmatic notification delivery.",
+		Description: "Subscribe to agent task notifications for a team. This tool BLOCKS until a notification arrives or timeout is reached. Designed for use with background Task agents: the agent calls team_subscribe and blocks waiting; when a notification arrives, the tool returns and the agent completes, triggering a <task-notification> that wakes the main session. Prefer this over team_watch for programmatic notification delivery. IMPORTANT: NEVER call this tool directly from the main session — it will block the main session and prevent it from doing any work. Always run it inside a background Task (run_in_background=true, subagent_type=Bash or general-purpose).",
 	}, teamSubscribeHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
@@ -974,6 +1012,79 @@ func testSamplingHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input
 		Supported: true,
 		Response:  responseText,
 	}, nil
+}
+
+// -- test_progress --
+
+type testProgressInput struct {
+	Steps   int    `json:"steps,omitempty" jsonschema:"Number of progress steps to send (default 5)"`
+	Message string `json:"message,omitempty" jsonschema:"Custom message prefix for progress notifications"`
+}
+
+type testProgressOutput struct {
+	HasProgressToken bool   `json:"has_progress_token"`
+	ProgressTokenRaw string `json:"progress_token_raw,omitempty"`
+	StepsSent        int    `json:"steps_sent"`
+	Errors           []string `json:"errors,omitempty"`
+	HasSession       bool   `json:"has_session"`
+}
+
+func testProgressHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input testProgressInput) (*mcpsdk.CallToolResult, testProgressOutput, error) {
+	steps := input.Steps
+	if steps <= 0 {
+		steps = 5
+	}
+	if steps > 20 {
+		steps = 20
+	}
+	msgPrefix := input.Message
+	if msgPrefix == "" {
+		msgPrefix = "Test progress step"
+	}
+
+	output := testProgressOutput{
+		HasSession: req.Session != nil,
+	}
+
+	// Check for progress token
+	progressToken := req.Params.GetProgressToken()
+	output.HasProgressToken = progressToken != nil
+	if progressToken != nil {
+		output.ProgressTokenRaw = fmt.Sprintf("%v (type: %T)", progressToken, progressToken)
+	}
+
+	// Attempt to send progress notifications
+	if progressToken != nil && req.Session != nil {
+		for i := 1; i <= steps; i++ {
+			err := req.Session.NotifyProgress(ctx, &mcpsdk.ProgressNotificationParams{
+				ProgressToken: progressToken,
+				Progress:      float64(i),
+				Total:         float64(steps),
+				Message:       fmt.Sprintf("%s %d/%d", msgPrefix, i, steps),
+			})
+			if err != nil {
+				output.Errors = append(output.Errors, fmt.Sprintf("step %d: %v", i, err))
+			} else {
+				output.StepsSent++
+			}
+			// Small delay between steps to allow observation
+			time.Sleep(500 * time.Millisecond)
+		}
+	} else {
+		// No progress token — still try sending without token to see what happens
+		if req.Session != nil {
+			err := req.Session.NotifyProgress(ctx, &mcpsdk.ProgressNotificationParams{
+				Progress: 1,
+				Total:    1,
+				Message:  "test notification without progress token",
+			})
+			if err != nil {
+				output.Errors = append(output.Errors, fmt.Sprintf("no-token attempt: %v", err))
+			}
+		}
+	}
+
+	return nil, output, nil
 }
 
 // -- team_watch --
@@ -1047,6 +1158,8 @@ func teamSubscribeHandler(ctx context.Context, req *mcpsdk.CallToolRequest, inpu
 	for {
 		matched := drainTeamNotificationsLocked(input.Team)
 		if len(matched) > 0 {
+			// Return immediately so the background agent exits and triggers
+			// a <task-notification> to the main session.
 			pendingMu.Unlock()
 			return nil, teamSubscribeOutput{
 				Notifications: matched,

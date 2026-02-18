@@ -110,6 +110,18 @@ func (s *HTTPServer) handleDispatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Store callback URL if provided
+	if req.CallbackURL != "" {
+		task, err = agent.UpdateTask(teamName, task.ID, func(t *agent.Task) error {
+			t.CallbackURL = req.CallbackURL
+			return nil
+		})
+		if err != nil {
+			respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to store callback URL: %v", err))
+			return
+		}
+	}
+
 	// Start agent
 	if _, err := agent.StartAgent(teamName, workerName); err != nil {
 		respondError(w, http.StatusInternalServerError, fmt.Sprintf("failed to start agent: %v", err))
