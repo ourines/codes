@@ -88,6 +88,8 @@ func (m Model) updateStats(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "project":
 			m.statsBreakdown = "model"
 		case "model":
+			m.statsBreakdown = "profile"
+		case "profile":
 			m.statsBreakdown = "both"
 		}
 		return m, nil
@@ -186,6 +188,17 @@ func renderStatsView(daily []stats.DailyStat, records []stats.SessionRecord, tim
 		}
 	}
 
+	// By Profile breakdown
+	if breakdown == "both" || breakdown == "profile" {
+		profileCosts := aggregateByProfile(daily)
+		if len(profileCosts) > 0 {
+			b.WriteString(statsHeaderStyle.Render("  By Profile:"))
+			b.WriteString("\n")
+			renderBreakdown(&b, profileCosts, totalCost, barWidth, 8)
+			b.WriteString("\n")
+		}
+	}
+
 	// Daily trend chart
 	if len(daily) > 1 {
 		b.WriteString(statsHeaderStyle.Render("  Daily Trend:"))
@@ -195,7 +208,7 @@ func renderStatsView(daily []stats.DailyStat, records []stats.SessionRecord, tim
 
 	// Help footer
 	b.WriteString("\n")
-	breakdownLabel := map[string]string{"both": "all", "project": "project", "model": "model"}[breakdown]
+	breakdownLabel := map[string]string{"both": "all", "project": "project", "model": "model", "profile": "profile"}[breakdown]
 	help := fmt.Sprintf("  w:week  m:month  a:all  f:group(%s)  r:refresh", breakdownLabel)
 	b.WriteString(statsDimStyle.Render(help))
 
@@ -223,6 +236,16 @@ func aggregateByModel(daily []stats.DailyStat) []costEntry {
 		for model, cost := range d.ByModel {
 			// Shorten model names for display
 			totals[shortenModel(model)] += cost
+		}
+	}
+	return sortedEntries(totals)
+}
+
+func aggregateByProfile(daily []stats.DailyStat) []costEntry {
+	totals := make(map[string]float64)
+	for _, d := range daily {
+		for profile, cost := range d.ByProfile {
+			totals[profile] += cost
 		}
 	}
 	return sortedEntries(totals)

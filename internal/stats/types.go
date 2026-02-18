@@ -7,6 +7,7 @@ type SessionRecord struct {
 	SessionID         string        `json:"sessionId"`
 	Project           string        `json:"project"`     // codes project alias (e.g. "codes"), falls back to path
 	ProjectPath       string        `json:"projectPath"` // full filesystem path
+	Profile           string        `json:"profile"`     // API profile name (config.Default at scan time), falls back to "unknown"
 	Model             string        `json:"model"`
 	StartTime         time.Time     `json:"startTime"`
 	EndTime           time.Time     `json:"endTime"`
@@ -28,6 +29,7 @@ type DailyStat struct {
 	OutputTokens int64              `json:"outputTokens"`
 	ByProject    map[string]float64 `json:"byProject"` // project alias -> cost
 	ByModel      map[string]float64 `json:"byModel"`   // model name -> cost
+	ByProfile    map[string]float64 `json:"byProfile"` // API profile name -> cost
 }
 
 // StatsCache is the on-disk cache of all scanned session data.
@@ -55,6 +57,7 @@ type Summary struct {
 	CacheRead      int64         `json:"cacheReadTokens"`
 	TopProjects    []ProjectCost `json:"topProjects"`
 	TopModels      []ModelCost   `json:"topModels"`
+	TopProfiles    []ProfileCost `json:"topProfiles"`
 	DailyBreakdown []DailyStat   `json:"dailyBreakdown"`
 }
 
@@ -68,4 +71,10 @@ type ProjectCost struct {
 type ModelCost struct {
 	Model string  `json:"model"`
 	Cost  float64 `json:"cost"`
+}
+
+// ProfileCost represents cost aggregation for a single API profile.
+type ProfileCost struct {
+	Profile string  `json:"profile"`
+	Cost    float64 `json:"cost"`
 }
