@@ -26,6 +26,7 @@ func Aggregate(records []SessionRecord, from, to time.Time) []DailyStat {
 				Date:      date,
 				ByProject: make(map[string]float64),
 				ByModel:   make(map[string]float64),
+				ByProfile: make(map[string]float64),
 			}
 			dailyMap[date] = ds
 		}
@@ -36,6 +37,11 @@ func Aggregate(records []SessionRecord, from, to time.Time) []DailyStat {
 		ds.OutputTokens += r.OutputTokens
 		ds.ByProject[r.Project] += r.CostUSD
 		ds.ByModel[r.Model] += r.CostUSD
+		profile := r.Profile
+		if profile == "" {
+			profile = "unknown"
+		}
+		ds.ByProfile[profile] += r.CostUSD
 	}
 
 	// Convert map to sorted slice
@@ -154,6 +160,28 @@ func ModelBreakdown(stats []DailyStat) []ModelCost {
 	return result
 }
 
+// ProfileBreakdown aggregates costs by API profile across all daily stats.
+// Returns a slice of ProfileCost sorted by cost descending.
+func ProfileBreakdown(stats []DailyStat) []ProfileCost {
+	totals := make(map[string]float64)
+	for _, s := range stats {
+		for profile, cost := range s.ByProfile {
+			totals[profile] += cost
+		}
+	}
+
+	result := make([]ProfileCost, 0, len(totals))
+	for profile, cost := range totals {
+		result = append(result, ProfileCost{Profile: profile, Cost: cost})
+	}
+
+	sort.Slice(result, func(i, j int) bool {
+		return result[i].Cost > result[j].Cost
+	})
+
+	return result
+}
+
 // GenerateSummary creates a comprehensive summary from session records.
 func GenerateSummary(records []SessionRecord, from, to time.Time) Summary {
 	dailyStats := Aggregate(records, from, to)
@@ -183,6 +211,7 @@ func GenerateSummary(records []SessionRecord, from, to time.Time) Summary {
 		CacheRead:      cacheRead,
 		TopProjects:    ProjectBreakdown(dailyStats),
 		TopModels:      ModelBreakdown(dailyStats),
+		TopProfiles:    ProfileBreakdown(dailyStats),
 		DailyBreakdown: dailyStats,
 	}
 }

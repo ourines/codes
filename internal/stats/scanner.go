@@ -91,6 +91,12 @@ func ScanSessions(opts ScanOptions) ([]SessionRecord, error) {
 		projects = make(map[string]config.ProjectEntry)
 	}
 
+	// Determine current default profile name
+	currentProfile := "unknown"
+	if cfg, err := config.LoadConfig(); err == nil && cfg.Default != "" {
+		currentProfile = cfg.Default
+	}
+
 	var records []SessionRecord
 
 	for _, entry := range entries {
@@ -126,7 +132,7 @@ func ScanSessions(opts ScanOptions) ([]SessionRecord, error) {
 			sessionID := strings.TrimSuffix(sf.Name(), ".jsonl")
 			filePath := filepath.Join(dirPath, sf.Name())
 
-			record, err := parseSessionFile(filePath, sessionID, projectAlias, projectPath)
+			record, err := parseSessionFile(filePath, sessionID, projectAlias, projectPath, currentProfile)
 			if err != nil {
 				continue // skip unparseable files
 			}
@@ -140,7 +146,7 @@ func ScanSessions(opts ScanOptions) ([]SessionRecord, error) {
 }
 
 // parseSessionFile reads a single JSONL session file and extracts a SessionRecord.
-func parseSessionFile(path, sessionID, project, projectPath string) (*SessionRecord, error) {
+func parseSessionFile(path, sessionID, project, projectPath, profile string) (*SessionRecord, error) {
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, fmt.Errorf("open session file: %w", err)
@@ -151,6 +157,7 @@ func parseSessionFile(path, sessionID, project, projectPath string) (*SessionRec
 		SessionID:   sessionID,
 		Project:     project,
 		ProjectPath: projectPath,
+		Profile:     profile,
 	}
 
 	var (
