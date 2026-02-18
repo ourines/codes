@@ -104,6 +104,9 @@ type Model struct {
 	workflowList   []workflow.Workflow
 	workflowRun    *workflow.WorkflowRunResult
 	workflowCursor int
+	// Projects tab search
+	searchActive bool
+	searchQuery  string
 }
 
 // projectDeletedMsg is sent after deleting a project.
@@ -212,7 +215,7 @@ func NewModel(version string) Model {
 	pl.SetShowTitle(false)
 	pl.SetShowHelp(false)
 	pl.SetShowStatusBar(false)
-	pl.SetFilteringEnabled(true)
+	pl.SetFilteringEnabled(false) // Custom search implemented below
 
 	// Load profiles
 	profileItems, _ := loadProfiles()
@@ -335,15 +338,22 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.updatePartialRollback(msg)
 		}
 
+		// Handle custom search mode for Projects tab
+		if m.state == viewProjects && m.searchActive && msg.String() != "tab" {
+			return m.updateProjectSearch(msg)
+		}
+		if m.state == viewProjects && m.searchActive { // tab pressed during search
+			m.searchActive = false
+			m.searchQuery = ""
+			m.projectList.SetItems(loadProjects())
+		}
+
 		// Right panel focused — handle session selection
 		if m.focus == focusRight && m.state == viewProjects {
 			return m.updateRightPanel(msg)
 		}
 
 		// Don't intercept keys when the current list is filtering
-		if m.state == viewProjects && m.projectList.FilterState() == list.Filtering {
-			return m.updateList(msg)
-		}
 		if m.state == viewConfig {
 			if m.configSubTab == configProfiles && m.profileList.FilterState() == list.Filtering {
 				return m.updateList(msg)
@@ -445,6 +455,11 @@ func (m Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 					}
 				}
 			}
+
+		case msg.String() == "/" && m.state == viewProjects && m.focus == focusLeft:
+			m.searchActive = true
+			m.searchQuery = ""
+			return m, nil
 
 		case msg.String() == "l" && m.state == viewProjects:
 			// Open link management for selected project
@@ -1360,7 +1375,12 @@ func (m Model) View() string {
 	}
 
 	// Status/Error display
-	if m.err != "" {
+	if m.state == viewProjects && m.searchActive {
+		b.WriteString("\n")
+		searchStyle := lipgloss.NewStyle().Foreground(primaryColor).Bold(true)
+		cursor := lipgloss.NewStyle().Background(primaryColor).Foreground(lipgloss.Color("#FFFFFF")).Render(" ")
+		b.WriteString("  " + searchStyle.Render("/") + " " + m.searchQuery + cursor)
+	} else if m.err != "" {
 		b.WriteString("\n")
 		b.WriteString(statusErrorStyle.Render("  Error: " + m.err))
 	} else if m.statusMsg != "" {
@@ -1476,8 +1496,10 @@ func (m Model) renderAgentSubHeader(width int) string {
 }
 
 func (m Model) renderHelp() string {
-	if m.state == viewAddForm {
-		return formHintStyle.Render("Tab: switch fields  Enter: add  Esc: cancel")
+	if m.state == viewProjects && m.searchActive {
+		return formHintStyle.Render("type to filter  Backspace: delete  Enter: confirm  Esc: clear")
+	}
+	if m.state == viewAddForm {		return formHintStyle.Render("Tab: switch fields  Enter: add  Esc: cancel")
 	}
 	if m.state == viewAddProfile {
 		return formHintStyle.Render("Tab: switch fields  Space: toggle  Enter: add  Esc: cancel")
@@ -1691,4 +1713,59 @@ func openBrowser(url string) error {
 	default:
 		return fmt.Errorf("unsupported platform")
 	}
+}
+
+// updateProjectSearch handles key events when search mode is active on the Projects tab.
+func (m Model) updateProjectSearch(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	switch msg.String() {
+	case "esc":
+		m.searchActive = false
+		m.searchQuery = ""
+		m.projectList.SetItems(loadProjects())
+	case "enter":
+		// Confirm filter, exit search mode (filtered items remain)
+		m.searchActive = false
+	case "backspace", "ctrl+h":
+		if len(m.searchQuery) > 0 {
+			runes := []rune(m.searchQuery)
+			m.searchQuery = string(runes[:len(runes)-1])
+			m = m.applyProjectSearch()
+		}
+	case "ctrl+u":
+		// Clear entire query
+		m.searchQuery = ""
+		m.projectList.SetItems(loadProjects())
+	case "q", "ctrl+c":
+		return m, tea.Quit
+	default:
+		if len(msg.Runes) > 0 {
+			m.searchQuery += string(msg.Runes)
+			m = m.applyProjectSearch()
+		}
+	}
+	return m, nil
+}
+
+// applyProjectSearch filters the project list by the current searchQuery.
+func (m Model) applyProjectSearch() Model {
+	if m.searchQuery == "" {
+		m.projectList.SetItems(loadProjects())
+		return m
+	}
+	query := strings.ToLower(m.searchQuery)
+	all := loadProjects()
+	var filtered []list.Item
+	for _, item := range all {
+		if proj, ok := item.(projectItem); ok {
+			if strings.Contains(strings.ToLower(proj.info.Name), query) {
+				filtered = append(filtered, item)
+			}
+		}
+	}
+	if len(filtered) == 0 {
+		m.projectList.SetItems([]list.Item{})
+	} else {
+		m.projectList.SetItems(filtered)
+	}
+	return m
 }
