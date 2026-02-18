@@ -223,16 +223,12 @@ func ApplyStaged() error {
 
 // RunSelfUpdate performs a manual self-update: check → download → replace.
 func RunSelfUpdate(currentVer string) error {
-	if currentVer == "dev" {
-		return fmt.Errorf("development build, skipping update check")
-	}
-
 	release, err := CheckLatestVersion()
 	if err != nil {
 		return fmt.Errorf("failed to check for updates: %w", err)
 	}
 
-	if !CompareVersions(currentVer, release.TagName) {
+	if currentVer != "dev" && !CompareVersions(currentVer, release.TagName) {
 		fmt.Printf("Already up to date (%s)\n", currentVer)
 		return nil
 	}
