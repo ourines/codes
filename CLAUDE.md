@@ -39,7 +39,7 @@ The root command dynamically selects behavior:
 | `internal/remote` | SSH/SCP operations, remote codes installation, profile sync |
 | `internal/agent` | Agent team management: daemon lifecycle, task execution, message passing, Claude subprocess orchestration |
 | `internal/stats` | Cost tracking: JSONL session parsing, token aggregation, caching, time-range filtering |
-| `internal/mcp` | MCP server exposing 43 tools over stdio transport (10 config + 25 agent + 4 stats + 4 workflow tools) |
+| `internal/mcp` | MCP server: 44 tools over stdio + SSE (`/mcp/` on HTTP port). `NewSSEHandler()` mounts SSE on existing HTTP mux — single port. |
 | `internal/commands` | Cobra command definitions (`cobra.go`) + implementations (`commands.go`) |
 | `internal/output` | JSON mode wrapper (`output.JSONMode` flag) |
 | `internal/ui` | Styled CLI text output helpers |
@@ -78,7 +78,7 @@ codes
 │   ├── run <name>           # Launch workflow as agent team
 │   ├── create <name>        # Create template scaffold
 │   └── delete <name>        # Delete workflow
-├── serve                    # MCP server mode
+├── serve                    # Start full daemon: HTTP :3456 + SSE MCP /mcp/ + scheduler
 └── completion [shell]       # Hidden, still functional
 ```
 

@@ -12,7 +12,7 @@ Claude Code 的环境配置管理、项目管理与多 Agent 协作工具。一�
 - **Workflow 模板** — YAML 定义的 Agent 团队模板，一键启动可复用的多 Agent 流水线
 - **成本追踪** — 按项目、模型维度的 API 用量统计
 - **HTTP REST API** — 内置 REST API Server（`codes serve`），支持远程访问、移动客户端和 WebSocket 实时对话
-- **MCP Server** — 43 个工具集成到 Claude Code，直接在对话中管理一切
+- **MCP Server** — 43 个工具，stdio + SSE 双传输（SSE 挂载在 `/mcp/`，与 HTTP 共用同一端口，无需额外端口）
 - **跨平台** — Linux, macOS, Windows (amd64 & arm64)
 
 ## 安装
@@ -152,7 +152,14 @@ tasks:
 
 ## HTTP REST API Server
 
-`codes serve` 启动 REST API Server（默认 `:3456`），通过 HTTP 暴露所有 `codes` 功能，适用于 iOS/移动端 App 和远程自动化。
+`codes serve` 一条命令启动完整守护进程，无需任何参数。所有功能通过**单一端口**（默认 `:3456`）提供，适用于 iOS/移动端 App 和远程自动化。
+
+| 服务 | 地址 |
+|------|------|
+| HTTP REST API | `http://host:3456/` |
+| MCP SSE | `http://host:3456/mcp/` |
+| stdio MCP | 自动检测（被 pipe 调用时激活，如 Claude Code MCP 配置） |
+| Assistant scheduler | 后台自动运行 |
 
 **首次运行**会自动生成 Auth Token 并保存到 `~/.codes/config.json`。所有端点（`/health` 除外）需携带：
 
@@ -208,7 +215,7 @@ codes init [--yes]                       # 安装二进制文件 + shell 补全
 codes start <路径|别名>                   # 在指定目录启动 Claude（别名: s）
 codes version / update                   # 版本信息 / 更新 Claude CLI
 codes doctor                             # 系统诊断
-codes serve [--addr :3456]              # 启动 HTTP REST API Server
+codes serve                              # 启动完整守护进程（HTTP :3456 + SSE MCP /mcp/ + scheduler）
 ```
 
 ### Profile 管理 (`codes profile`，别名: `pf`)

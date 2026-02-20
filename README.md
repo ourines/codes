@@ -12,7 +12,7 @@ Environment configuration management, project management, and multi-agent collab
 - **Workflow Templates** — YAML-based agent team templates for repeatable multi-agent pipelines
 - **Cost Tracking** — Session-level API usage statistics by project and model
 - **HTTP REST API** — Full REST API server (`codes serve`) for remote access, mobile clients, and WebSocket-based chat sessions
-- **MCP Server** — 43 tools integrated into Claude Code for managing everything from conversations
+- **MCP Server** — 43 tools over stdio + SSE (served at `/mcp/` on same port as HTTP, no extra port needed)
 - **Cross-Platform** — Linux, macOS, Windows (amd64 & arm64)
 
 ## Install
@@ -152,7 +152,14 @@ Workflows can also be created programmatically via the `workflow_create` MCP too
 
 ## HTTP REST API Server
 
-`codes serve` starts a REST API server (default `:3456`) that exposes all `codes` functionality over HTTP — designed for iOS/mobile apps and remote automation.
+`codes serve` starts the full daemon — no flags needed. Everything runs on a **single port** (default `:3456`):
+
+| Service | Address |
+|---------|---------|
+| HTTP REST API | `http://host:3456/` |
+| MCP SSE | `http://host:3456/mcp/` |
+| stdio MCP | Auto-detected (when stdin is a pipe, e.g. Claude Code MCP config) |
+| Assistant scheduler | Background goroutine |
 
 **First run** auto-generates and saves an auth token to `~/.codes/config.json`. All endpoints (except `/health`) require:
 
@@ -208,7 +215,7 @@ codes init [--yes]                       # Install binary + shell completion
 codes start <path|alias>                 # Launch Claude in directory (alias: s)
 codes version / update                   # Version info / update Claude CLI
 codes doctor                             # System diagnostics
-codes serve [--addr :3456]              # Start HTTP REST API server
+codes serve                              # Start full daemon (HTTP :3456 + SSE MCP /mcp/ + scheduler)
 ```
 
 ### Profile Management (`codes profile`, alias: `pf`)

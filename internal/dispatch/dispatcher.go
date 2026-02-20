@@ -221,6 +221,178 @@ func execute(intent *IntentResponse, project config.ProjectEntry, opts DispatchO
 	}, nil
 }
 
+// DispatchStream performs dispatch with streaming events via the onEvent callback.
+// Each phase of the dispatch process emits an event so the caller can stream progress.
+func DispatchStream(ctx context.Context, opts DispatchOptions, onEvent func(DispatchEvent)) {
+	start := time.Now()
+
+	if opts.UserInput == "" {
+		onEvent(DispatchEvent{Event: "error", Error: "user input is required", Duration: time.Since(start).String()})
+		return
+	}
+	if opts.Channel == "" {
+		opts.Channel = "cli"
+	}
+	if !validChannel.MatchString(opts.Channel) {
+		opts.Channel = "unknown"
+	}
+
+	// Phase: analyzing
+	onEvent(DispatchEvent{Event: "status", Phase: "analyzing", Message: "Analyzing intent..."})
+
+	apiKey, baseURL, err := resolveAPICredentials()
+	if err != nil {
+		onEvent(DispatchEvent{Event: "error", Error: fmt.Sprintf("resolve API credentials: %v", err), Duration: time.Since(start).String()})
+		return
+	}
+
+	projectNames, err := getProjectNames()
+	if err != nil {
+		onEvent(DispatchEvent{Event: "error", Error: fmt.Sprintf("list projects: %v", err), Duration: time.Since(start).String()})
+		return
+	}
+
+	systemPrompt, userPrompt := buildPrompt(opts.UserInput, projectNames)
+	intent, err := analyzeIntent(ctx, apiKey, baseURL, opts.Model, systemPrompt, userPrompt)
+	if err != nil {
+		onEvent(DispatchEvent{Event: "error", Error: fmt.Sprintf("analyze intent: %v", err), Duration: time.Since(start).String()})
+		return
+	}
+
+	if opts.Project != "" {
+		intent.Project = opts.Project
+	}
+
+	// Clarify?
+	if intent.Clarify != "" {
+		onEvent(DispatchEvent{Event: "clarify", Clarify: intent.Clarify, Intent: intent, Duration: time.Since(start).String()})
+		return
+	}
+
+	// Error in intent?
+	if intent.Error != "" {
+		onEvent(DispatchEvent{Event: "error", Error: intent.Error, Intent: intent, Duration: time.Since(start).String()})
+		return
+	}
+
+	if intent.Project == "" {
+		onEvent(DispatchEvent{Event: "error", Error: "no project identified from the request", Intent: intent, Duration: time.Since(start).String()})
+		return
+	}
+
+	project, exists := config.GetProject(intent.Project)
+	if !exists {
+		onEvent(DispatchEvent{Event: "error", Error: fmt.Sprintf("project %q not found", intent.Project), Intent: intent, Duration: time.Since(start).String()})
+		return
+	}
+
+	if len(intent.Tasks) == 0 {
+		onEvent(DispatchEvent{Event: "error", Error: "no tasks identified from the request", Intent: intent, Duration: time.Since(start).String()})
+		return
+	}
+
+	// Phase: creating team
+	result, err := executeStream(intent, project, opts, onEvent)
+	if err != nil {
+		onEvent(DispatchEvent{Event: "error", Error: err.Error(), Duration: time.Since(start).String()})
+		return
+	}
+
+	// Final result
+	onEvent(DispatchEvent{
+		Event:         "result",
+		Phase:         "completed",
+		TeamName:      result.TeamName,
+		TasksCreated:  result.TasksCreated,
+		AgentsStarted: result.AgentsStarted,
+		Intent:        intent,
+		Duration:      time.Since(start).String(),
+	})
+}
+
+// executeStream is like execute but emits progress events.
+func executeStream(intent *IntentResponse, project config.ProjectEntry, opts DispatchOptions, onEvent func(DispatchEvent)) (*DispatchResult, error) {
+	randBuf := make([]byte, 2)
+	_, _ = rand.Read(randBuf)
+	randSuffix := int(randBuf[0])<<8 | int(randBuf[1])
+	teamName := fmt.Sprintf("dispatch-%s-%d-%04d", opts.Channel, time.Now().UnixNano(), randSuffix%10000)
+
+	onEvent(DispatchEvent{Event: "status", Phase: "creating_team", Message: fmt.Sprintf("Creating team %s...", teamName), TeamName: teamName})
+
+	desc := fmt.Sprintf("Dispatch: %.200s", opts.UserInput)
+	if _, err := agent.CreateTeam(teamName, desc, project.Path); err != nil {
+		return nil, fmt.Errorf("create team: %w", err)
+	}
+
+	numWorkers := len(intent.Tasks)
+	if numWorkers > 5 {
+		numWorkers = 5
+	}
+
+	workers := workerNames(numWorkers)
+	for _, name := range workers {
+		if err := agent.AddMember(teamName, agent.TeamMember{
+			Name: name, Role: "Execute dispatched coding tasks", Model: "sonnet", Type: "worker",
+		}); err != nil {
+			agent.DeleteTeam(teamName)
+			return nil, fmt.Errorf("add worker %s: %w", name, err)
+		}
+	}
+
+	onEvent(DispatchEvent{Event: "status", Phase: "creating_tasks", Message: fmt.Sprintf("Creating %d tasks...", len(intent.Tasks))})
+
+	taskIDMap := make(map[int]int)
+	for i, taskIntent := range intent.Tasks {
+		var blockedBy []int
+		for _, dep := range taskIntent.DependsOn {
+			if actualID, ok := taskIDMap[dep]; ok {
+				blockedBy = append(blockedBy, actualID)
+			}
+		}
+		owner := workers[i%numWorkers]
+		priority := agent.PriorityNormal
+		switch taskIntent.Priority {
+		case "high":
+			priority = agent.PriorityHigh
+		case "low":
+			priority = agent.PriorityLow
+		}
+		task, err := agent.CreateTask(teamName, taskIntent.Subject, taskIntent.Description, owner, blockedBy, priority, intent.Project, "")
+		if err != nil {
+			agent.DeleteTeam(teamName)
+			return nil, fmt.Errorf("create task %d: %w", i+1, err)
+		}
+		if opts.CallbackURL != "" {
+			agent.UpdateTask(teamName, task.ID, func(t *agent.Task) error {
+				t.CallbackURL = opts.CallbackURL
+				return nil
+			})
+		}
+		taskIDMap[i+1] = task.ID
+	}
+
+	onEvent(DispatchEvent{Event: "status", Phase: "starting_agents", Message: fmt.Sprintf("Starting %d agents...", numWorkers)})
+
+	results, err := agent.StartAllAgents(teamName)
+	if err != nil {
+		agent.DeleteTeam(teamName)
+		return nil, fmt.Errorf("start agents: %w", err)
+	}
+
+	agentsStarted := 0
+	for _, r := range results {
+		if r.Started {
+			agentsStarted++
+		}
+	}
+
+	return &DispatchResult{
+		TeamName:      teamName,
+		TasksCreated:  len(intent.Tasks),
+		AgentsStarted: agentsStarted,
+	}, nil
+}
+
 // resolveAPICredentials loads the API key and base URL from the active profile.
 func resolveAPICredentials() (apiKey, baseURL string, err error) {
 	cfg, err := config.LoadConfig()

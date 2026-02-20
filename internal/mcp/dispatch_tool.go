@@ -11,11 +11,11 @@ import (
 // -- dispatch --
 
 type dispatchInput struct {
-	Text        string `json:"text" jsonschema:"description=自然语言任务描述"`
-	Project     string `json:"project,omitempty" jsonschema:"description=目标项目名称（可选，不填由 AI 自动识别）"`
-	Channel     string `json:"channel,omitempty" jsonschema:"description=来源渠道标识，默认 mcp"`
-	CallbackURL string `json:"callback_url,omitempty" jsonschema:"description=任务完成后��调的 URL"`
-	Model       string `json:"model,omitempty" jsonschema:"description=用于意图分析的模型，默认 haiku"`
+	Text        string `json:"text" jsonschema:"Natural language task description"`
+	Project     string `json:"project,omitempty" jsonschema:"Target project name (auto-detected if omitted)"`
+	Channel     string `json:"channel,omitempty" jsonschema:"Source channel identifier (default: mcp)"`
+	CallbackURL string `json:"callback_url,omitempty" jsonschema:"URL to POST when tasks complete"`
+	Model       string `json:"model,omitempty" jsonschema:"Model for intent analysis (default: haiku)"`
 }
 
 type dispatchOutput struct {

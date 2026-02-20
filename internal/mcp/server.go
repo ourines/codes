@@ -2,12 +2,14 @@ package mcpserver
 
 import (
 	"context"
+	"net/http"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
-// RunServer starts the MCP server over stdio transport.
-func RunServer() error {
+// buildServer creates and registers all MCP tools on a new server instance.
+// Both stdio and SSE modes share this same server.
+func buildServer() *mcpsdk.Server {
 	server := mcpsdk.NewServer(
 		&mcpsdk.Implementation{
 			Name:    "codes",
@@ -79,5 +81,21 @@ func RunServer() error {
 	// Stats tools
 	registerStatsTools(server)
 
+	return server
+}
+
+// RunServer starts the MCP server over stdio transport.
+func RunServer() error {
+	server := buildServer()
 	return server.Run(context.Background(), &mcpsdk.StdioTransport{})
 }
+
+// NewSSEHandler returns an HTTP handler serving the MCP SSE transport.
+// Mount it at a path prefix, e.g. /mcp/.
+func NewSSEHandler() http.Handler {
+	server := buildServer()
+	return mcpsdk.NewSSEHandler(func(*http.Request) *mcpsdk.Server {
+		return server
+	}, nil)
+}
+

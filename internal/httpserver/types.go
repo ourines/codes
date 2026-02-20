@@ -87,3 +87,16 @@ type HealthResponse struct {
 	Status  string `json:"status"`
 	Version string `json:"version,omitempty"`
 }
+
+// AssistantRequest is the request body for POST /assistant
+type AssistantRequest struct {
+	Text      string `json:"text"`                 // User message
+	SessionID string `json:"session_id,omitempty"` // Conversation session (default: "default")
+	Model     string `json:"model,omitempty"`      // Override model
+}
+
+// AssistantResponse is the response body for POST /assistant
+type AssistantResponse struct {
+	Reply     string `json:"reply"`
+	SessionID string `json:"session_id"`
+}

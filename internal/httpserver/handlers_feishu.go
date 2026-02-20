@@ -5,10 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"strings"
 	"sync"
 	"time"
 
-	"codes/internal/dispatch"
+	"codes/internal/assistant"
 )
 
 // feishuDedup is an in-memory event deduplication store (TTL 10 minutes).
@@ -20,7 +21,6 @@ var (
 func feishuMarkSeen(eventID string) bool {
 	feishuDedupMu.Lock()
 	defer feishuDedupMu.Unlock()
-	// Clean expired entries
 	now := time.Now()
 	for id, t := range feishuDedup {
 		if now.Sub(t) > 10*time.Minute {
@@ -28,7 +28,7 @@ func feishuMarkSeen(eventID string) bool {
 		}
 	}
 	if _, seen := feishuDedup[eventID]; seen {
-		return false // already processed
+		return false
 	}
 	feishuDedup[eventID] = now
 	return true
@@ -77,15 +77,22 @@ func (s *HTTPServer) handleFeishuWebhook(w http.ResponseWriter, r *http.Request)
 		return
 	}
 
-	// Dispatch async — respond to Feishu immediately (< 3s timeout requirement)
+	// Use chat_id as session so each chat has its own conversation history.
+	sessionID := event.Event.Message.ChatID
+	if sessionID == "" {
+		sessionID = "feishu-default"
+	}
+	text := strings.TrimSpace(textContent.Text)
+
+	// Run assistant async — respond to Feishu immediately (< 3 s requirement).
 	go func() {
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Minute)
 		defer cancel()
-		_, _ = dispatch.Dispatch(ctx, dispatch.DispatchOptions{
-			UserInput: textContent.Text,
-			Channel:   "feishu",
-			ChatID:    event.Event.Message.ChatID,
+		_, _ = assistant.Run(ctx, assistant.RunOptions{
+			SessionID: sessionID,
+			Message:   text,
 		})
+		// TODO: push reply back to Feishu chat via Feishu bot API
 	}()
 
 	respondJSON(w, http.StatusOK, map[string]string{"status": "accepted"})

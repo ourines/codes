@@ -28,9 +28,16 @@ func (s *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 }
 
 // handleDispatch handles POST /dispatch using smart intent analysis.
+// Supports SSE streaming when Accept: text/event-stream is present.
 func (s *HTTPServer) handleDispatch(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	// Check if client wants SSE streaming
+	if r.Header.Get("Accept") == "text/event-stream" {
+		s.handleDispatchSSE(w, r)
 		return
 	}
 
@@ -83,6 +90,56 @@ func (s *HTTPServer) handleDispatch(w http.ResponseWriter, r *http.Request) {
 		TasksCreated:  result.TasksCreated,
 		AgentsStarted: result.AgentsStarted,
 		Duration:      result.DurationStr,
+	})
+}
+
+// handleDispatchSSE handles POST /dispatch with SSE streaming.
+func (s *HTTPServer) handleDispatchSSE(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req DispatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	if req.Text == "" {
+		respondError(w, http.StatusBadRequest, "field 'text' is required")
+		return
+	}
+
+	if req.Channel == "" {
+		req.Channel = "http"
+	}
+
+	// Set SSE headers
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	w.Header().Set("Connection", "keep-alive")
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
+
+	flusher, ok := w.(http.Flusher)
+	if !ok {
+		respondError(w, http.StatusInternalServerError, "streaming not supported")
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	dispatch.DispatchStream(ctx, dispatch.DispatchOptions{
+		UserInput:   req.Text,
+		Channel:     req.Channel,
+		ChatID:      req.ChatID,
+		Project:     req.Project,
+		CallbackURL: req.CallbackURL,
+	}, func(event dispatch.DispatchEvent) {
+		data, err := json.Marshal(event)
+		if err != nil {
+			return
+		}
+		fmt.Fprintf(w, "event: %s\ndata: %s\n\n", event.Event, data)
+		flusher.Flush()
 	})
 }
 

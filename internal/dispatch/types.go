@@ -36,3 +36,21 @@ type DispatchResult struct {
 	Error         string        `json:"error,omitempty"`
 	DurationStr   string          `json:"duration"`
 }
+
+// DispatchEvent represents a single SSE event during streaming dispatch.
+type DispatchEvent struct {
+	Event string `json:"-"`              // SSE event name: "status", "result", "clarify", "error"
+	Phase string `json:"phase,omitempty"` // "analyzing", "creating_team", "creating_tasks", "starting_agents"
+	Message string `json:"message,omitempty"`
+
+	// Result fields (event: result)
+	TeamName      string          `json:"teamName,omitempty"`
+	TasksCreated  int             `json:"tasksCreated,omitempty"`
+	AgentsStarted int             `json:"agentsStarted,omitempty"`
+	Intent        *IntentResponse `json:"intent,omitempty"`
+
+	// Clarify / error fields
+	Clarify  string `json:"clarify,omitempty"`
+	Error    string `json:"error,omitempty"`
+	Duration string `json:"duration,omitempty"`
+}

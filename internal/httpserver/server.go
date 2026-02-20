@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"log"
 	"net/http"
 	"strings"
@@ -11,6 +12,7 @@ type HTTPServer struct {
 	mux     *http.ServeMux
 	tokens  []string
 	version string
+	srv     *http.Server
 }
 
 // NewHTTPServer creates a new HTTP server instance
@@ -65,6 +67,7 @@ func (s *HTTPServer) registerRoutes() {
 
 	// === Feishu inbound ===
 	s.mux.HandleFunc("/feishu/webhook", loggingMiddleware(s.handleFeishuWebhook))
+	s.mux.HandleFunc("/assistant", loggingMiddleware(s.authMiddleware(jsonContentTypeMiddleware(s.handleAssistant))))
 }
 
 // --- Route dispatchers for multi-method / sub-path endpoints ---
@@ -220,5 +223,19 @@ func (s *HTTPServer) ListenAndServe(addr string) error {
 	}
 	log.Printf("[HTTP] Starting server on %s", addr)
 	log.Printf("[HTTP] Registered %d valid tokens", len(s.tokens))
-	return http.ListenAndServe(addr, s.mux)
+	s.srv = &http.Server{Addr: addr, Handler: s.mux}
+	return s.srv.ListenAndServe()
+}
+
+// Handle registers an additional handler on the server mux before ListenAndServe is called.
+func (s *HTTPServer) Handle(pattern string, handler http.Handler) {
+	s.mux.Handle(pattern, handler)
+}
+
+// Shutdown gracefully stops the HTTP server.
+func (s *HTTPServer) Shutdown(ctx context.Context) error {
+	if s.srv == nil {
+		return nil
+	}
+	return s.srv.Shutdown(ctx)
 }
