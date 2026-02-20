@@ -62,6 +62,9 @@ func (s *HTTPServer) registerRoutes() {
 	// === Workflows (Block F) ===
 	s.mux.HandleFunc("/workflows", loggingMiddleware(s.authMiddleware(s.handleListWorkflows)))
 	s.mux.HandleFunc("/workflows/", loggingMiddleware(s.authMiddleware(s.routeWorkflow)))
+
+	// === Feishu inbound ===
+	s.mux.HandleFunc("/feishu/webhook", loggingMiddleware(s.handleFeishuWebhook))
 }
 
 // --- Route dispatchers for multi-method / sub-path endpoints ---
