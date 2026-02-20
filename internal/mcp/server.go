@@ -70,6 +70,9 @@ func RunServer() error {
 	// Agent team tools
 	registerAgentTools(server)
 
+	// Dispatch tool
+	registerDispatchTool(server)
+
 	// Workflow tools
 	registerWorkflowTools(server)
 

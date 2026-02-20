@@ -115,7 +115,7 @@ PID tracking via `/tmp/codes-session-<id>.pid`. `RefreshStatus()` polls process 
 
 ### MCP Server (`internal/mcp`)
 
-43 tools registered via `mcpsdk.AddTool()` over stdio transport:
+44 tools registered via `mcpsdk.AddTool()` over stdio transport:
 
 **Config tools (10):** `list_projects`, `add_project`, `remove_project`, `list_profiles`, `switch_profile`, `get_project_info`, `list_remotes`, `add_remote`, `remove_remote`, `sync_remote`
 
@@ -124,6 +124,8 @@ PID tracking via `/tmp/codes-session-<id>.pid`. `RefreshStatus()` polls process 
 **Agent tools (25):** `team_create`, `team_delete`, `team_list`, `team_get`, `team_status`, `team_start_all`, `team_stop_all`, `team_activity`, `agent_add`, `agent_remove`, `agent_list`, `agent_start`, `agent_stop`, `task_create`, `task_update`, `task_redirect`, `task_list`, `task_get`, `message_send`, `message_list`, `message_mark_read`, `test_sampling`, `test_progress`, `team_watch`, `team_subscribe`
 
 **Workflow tools (4):** `workflow_list`, `workflow_get`, `workflow_run`, `workflow_create`
+
+**Dispatch tools (1):** `dispatch`
 
 ### Agent Team System (`internal/agent`)
 
