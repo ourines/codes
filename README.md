@@ -172,8 +172,6 @@ Authorization: Bearer <token>
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/health` | Health check (no auth) |
-| `POST` | `/dispatch` | Dispatch task to agent team |
-| `POST` | `/dispatch/simple` | Simplified single-task dispatch |
 | `GET/POST` | `/sessions` | List / create chat sessions |
 | `GET/DELETE` | `/sessions/{id}` | Get / delete session |
 | `GET` | `/sessions/{id}/ws` | WebSocket stream (real-time I/O) |
@@ -189,12 +187,22 @@ Authorization: Bearer <token>
 | `GET` | `/stats/models` | Cost by model |
 | `POST` | `/stats/refresh` | Rebuild stats cache |
 | `GET` | `/workflows` | List workflows |
-| `GET/POST` | `/workflows/{name}` | Get / run workflow |
-| `GET/POST` | `/teams` | List / create teams |
-| `GET/DELETE` | `/teams/{name}` | Get / delete team |
-| `GET` | `/teams/{name}/status` | Team dashboard |
-| `GET/POST` | `/teams/{name}/tasks` | List / create tasks |
-| `GET` | `/tasks/{id}` | Get task by ID |
+| `GET` | `/workflows/{name}` | Get workflow |
+| `POST` | `/workflows/{name}/run` | Run workflow |
+| `GET/POST` | `/teams` | List / create team definitions |
+| `GET/PUT/DELETE` | `/teams/{name}` | Get / update / delete team definition |
+| `POST` | `/teams/{name}/spawn` | Spawn a run from team template |
+| `GET/POST` | `/runs` | List / create runs |
+| `GET/DELETE` | `/runs/{name}` | Get / delete run |
+| `GET/POST` | `/runs/{name}/tasks` | List / create run tasks |
+| `PUT` | `/runs/{name}/tasks/{id}` | Update run task |
+| `GET/POST` | `/runs/{name}/messages` | List / send run messages |
+| `POST` | `/runs/{name}/start` | Start run agents |
+| `POST` | `/runs/{name}/stop` | Stop run agents |
+| `GET` | `/runs/{name}/activity` | Run activity stream |
+| `GET` | `/tasks/{team}/{id}` | Get task by team and ID |
+| `POST` | `/feishu/webhook` | Feishu inbound webhook (no auth) |
+| `POST` | `/assistant` | Assistant endpoint |
 
 ### Configuration
 

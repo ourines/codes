@@ -172,8 +172,6 @@ Authorization: Bearer <token>
 | 方法 | 路径 | 说明 |
 |------|------|------|
 | `GET` | `/health` | 健康检查（无需认证） |
-| `POST` | `/dispatch` | 分发任务到 Agent 团队 |
-| `POST` | `/dispatch/simple` | 简化版单任务分发 |
 | `GET/POST` | `/sessions` | 列出 / 创建对话 Session |
 | `GET/DELETE` | `/sessions/{id}` | 获取 / 删除 Session |
 | `GET` | `/sessions/{id}/ws` | WebSocket 流（实时 I/O） |
@@ -189,12 +187,22 @@ Authorization: Bearer <token>
 | `GET` | `/stats/models` | 按模型统计费用 |
 | `POST` | `/stats/refresh` | 重建统计缓存 |
 | `GET` | `/workflows` | 列出 Workflow |
-| `GET/POST` | `/workflows/{name}` | 获取 / 运行 Workflow |
-| `GET/POST` | `/teams` | 列出 / 创建团队 |
-| `GET/DELETE` | `/teams/{name}` | 获取 / 删除团队 |
-| `GET` | `/teams/{name}/status` | 团队仪表盘 |
-| `GET/POST` | `/teams/{name}/tasks` | 列出 / 创建任务 |
-| `GET` | `/tasks/{id}` | 按 ID 获取任务 |
+| `GET` | `/workflows/{name}` | 获取 Workflow |
+| `POST` | `/workflows/{name}/run` | 运行 Workflow |
+| `GET/POST` | `/teams` | 列出 / 创建团队定义 |
+| `GET/PUT/DELETE` | `/teams/{name}` | 获取 / 更新 / 删除团队定义 |
+| `POST` | `/teams/{name}/spawn` | 从团队模板创建 Run |
+| `GET/POST` | `/runs` | 列出 / 创建 Run |
+| `GET/DELETE` | `/runs/{name}` | 获取 / 删除 Run |
+| `GET/POST` | `/runs/{name}/tasks` | 列出 / 创建 Run 任务 |
+| `PUT` | `/runs/{name}/tasks/{id}` | 更新 Run 任务 |
+| `GET/POST` | `/runs/{name}/messages` | 列出 / 发送 Run 消息 |
+| `POST` | `/runs/{name}/start` | 启动 Run 的 Agent |
+| `POST` | `/runs/{name}/stop` | 停止 Run 的 Agent |
+| `GET` | `/runs/{name}/activity` | Run 活动流 |
+| `GET` | `/tasks/{team}/{id}` | 按团队和 ID 获取任务 |
+| `POST` | `/feishu/webhook` | 飞书入站 Webhook（无需认证） |
+| `POST` | `/assistant` | Assistant 端点 |
 
 ### 配置
 
