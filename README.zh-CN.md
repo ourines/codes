@@ -11,7 +11,8 @@ Claude Code 的环境配置管理、项目管理与多 Agent 协作工具。一�
 - **Agent 团队** — 多个 Claude Agent 自治协作，任务依赖、消息传递、自动汇报
 - **Workflow 模板** — YAML 定义的 Agent 团队模板，一键启动可复用的多 Agent 流水线
 - **成本追踪** — 按项目、模型维度的 API 用量统计
-- **MCP Server** — 39 个工具集成到 Claude Code，直接在对话中管理一切
+- **HTTP REST API** — 内置 REST API Server（`codes serve`），支持远程访问、移动客户端和 WebSocket 实时对话
+- **MCP Server** — 43 个工具集成到 Claude Code，直接在对话中管理一切
 - **跨平台** — Linux, macOS, Windows (amd64 & arm64)
 
 ## 安装
@@ -59,12 +60,12 @@ git clone https://github.com/ourines/codes.git && cd codes && make build
 }
 ```
 
-配置完成后，Claude Code 即可使用 39 个 MCP 工具：
+配置完成后，Claude Code 即可使用 43 个 MCP 工具：
 
 | 分类 | 工具 | 示例 |
 |------|------|------|
 | **配置管理** (10) | 项目、Profile、远程主机 | `list_projects`、`switch_profile`、`sync_remote` |
-| **Agent** (21) | 团队、任务、消息 | `team_create`、`task_create`、`message_send` |
+| **Agent** (25) | 团队、任务、消息 | `team_create`、`task_create`、`message_send` |
 | **统计** (4) | 用量追踪 | `stats_summary`、`stats_by_project`、`stats_by_model` |
 | **Workflow** (4) | 模板 | `workflow_list`、`workflow_run`、`workflow_create` |
 
@@ -149,6 +150,56 @@ tasks:
 
 也可通过 `workflow_create` MCP 工具在对话中创建 workflow。
 
+## HTTP REST API Server
+
+`codes serve` 启动 REST API Server（默认 `:3456`），通过 HTTP 暴露所有 `codes` 功能，适用于 iOS/移动端 App 和远程自动化。
+
+**首次运行**会自动生成 Auth Token 并保存到 `~/.codes/config.json`。所有端点（`/health` 除外）需携带：
+
+```
+Authorization: Bearer <token>
+```
+
+### 端点列表
+
+| 方法 | 路径 | 说明 |
+|------|------|------|
+| `GET` | `/health` | 健康检查（无需认证） |
+| `POST` | `/dispatch` | 分发任务到 Agent 团队 |
+| `POST` | `/dispatch/simple` | 简化版单任务分发 |
+| `GET/POST` | `/sessions` | 列出 / 创建对话 Session |
+| `GET/DELETE` | `/sessions/{id}` | 获取 / 删除 Session |
+| `GET` | `/sessions/{id}/ws` | WebSocket 流（实时 I/O） |
+| `POST` | `/sessions/{id}/message` | 向 Session 发送消息 |
+| `POST` | `/sessions/{id}/interrupt` | 中断正在运行的 Session |
+| `POST` | `/sessions/{id}/resume` | 恢复暂停的 Session |
+| `GET` | `/projects` | 列出项目 |
+| `GET` | `/projects/{name}` | 获取项目详情 |
+| `GET` | `/profiles` | 列出 Profile |
+| `POST` | `/profiles/switch` | 切换活跃 Profile |
+| `GET` | `/stats/summary` | 费用概要 |
+| `GET` | `/stats/projects` | 按项目统计费用 |
+| `GET` | `/stats/models` | 按模型统计费用 |
+| `POST` | `/stats/refresh` | 重建统计缓存 |
+| `GET` | `/workflows` | 列出 Workflow |
+| `GET/POST` | `/workflows/{name}` | 获取 / 运行 Workflow |
+| `GET/POST` | `/teams` | 列出 / 创建团队 |
+| `GET/DELETE` | `/teams/{name}` | 获取 / 删除团队 |
+| `GET` | `/teams/{name}/status` | 团队仪表盘 |
+| `GET/POST` | `/teams/{name}/tasks` | 列出 / 创建任务 |
+| `GET` | `/tasks/{id}` | 按 ID 获取任务 |
+
+### 配置
+
+在 `~/.codes/config.json` 中可预设监听地址和 Token：
+
+```json
+{
+  "httpBind": ":3456",
+  "httpTokens": ["your-secret-token"]
+}
+```
+
 ## 命令参考
 
 ```
@@ -157,6 +208,7 @@ codes init [--yes]                       # 安装二进制文件 + shell 补全
 codes start <路径|别名>                   # 在指定目录启动 Claude（别名: s）
 codes version / update                   # 版本信息 / 更新 Claude CLI
 codes doctor                             # 系统诊断
+codes serve [--addr :3456]              # 启动 HTTP REST API Server
 ```
 
 ### Profile 管理 (`codes profile`，别名: `pf`)
@@ -287,9 +339,12 @@ codes/
 ├── cmd/codes/          # 入口
 ├── internal/
 │   ├── agent/          # Agent 团队：守护进程、任务执行、存储
+│   ├── chatsession/    # Claude 对话 Session 生命周期 + WebSocket 流
 │   ├── commands/       # Cobra CLI 命令
 │   ├── config/         # 配置管理
-│   ├── mcp/            # MCP Server（39 工具，stdio 传输）
+│   ├── dispatch/       # 意图驱动的任务分发到 Agent 团队
+│   ├── httpserver/     # HTTP REST API Server（Session、项目、统计、Workflow）
+│   ├── mcp/            # MCP Server（43 工具，stdio 传输）
 │   ├── session/        # 终端会话管理
 │   ├── stats/          # 成本追踪与聚合
 │   ├── remote/         # SSH 远程管理

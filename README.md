@@ -11,7 +11,8 @@ Environment configuration management, project management, and multi-agent collab
 - **Agent Teams** — Autonomous Claude agents collaborating with task dependencies, messaging, and auto-reporting
 - **Workflow Templates** — YAML-based agent team templates for repeatable multi-agent pipelines
 - **Cost Tracking** — Session-level API usage statistics by project and model
-- **MCP Server** — 40 tools integrated into Claude Code for managing everything from conversations
+- **HTTP REST API** — Full REST API server (`codes serve`) for remote access, mobile clients, and WebSocket-based chat sessions
+- **MCP Server** — 43 tools integrated into Claude Code for managing everything from conversations
 - **Cross-Platform** — Linux, macOS, Windows (amd64 & arm64)
 
 ## Install
@@ -59,12 +60,12 @@ Add `codes` as an MCP server to let Claude Code manage agent teams, projects, an
 }
 ```
 
-Once configured, Claude Code gains access to 39 MCP tools:
+Once configured, Claude Code gains access to 43 MCP tools:
 
 | Category | Tools | Examples |
 |----------|-------|---------|
 | **Config** (10) | Projects, profiles, remotes | `list_projects`, `switch_profile`, `sync_remote` |
-| **Agent** (21) | Teams, tasks, messages | `team_create`, `task_create`, `message_send` |
+| **Agent** (25) | Teams, tasks, messages | `team_create`, `task_create`, `message_send` |
 | **Stats** (4) | Usage tracking | `stats_summary`, `stats_by_project`, `stats_by_model` |
 | **Workflow** (4) | Templates | `workflow_list`, `workflow_run`, `workflow_create` |
 
@@ -149,6 +150,56 @@ tasks:
 
 Workflows can also be created programmatically via the `workflow_create` MCP tool.
 
+## HTTP REST API Server
+
+`codes serve` starts a REST API server (default `:3456`) that exposes all `codes` functionality over HTTP — designed for iOS/mobile apps and remote automation.
+
+**First run** auto-generates and saves an auth token to `~/.codes/config.json`. All endpoints (except `/health`) require:
+
+```
+Authorization: Bearer <token>
+```
+
+### Endpoints
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/health` | Health check (no auth) |
+| `POST` | `/dispatch` | Dispatch task to agent team |
+| `POST` | `/dispatch/simple` | Simplified single-task dispatch |
+| `GET/POST` | `/sessions` | List / create chat sessions |
+| `GET/DELETE` | `/sessions/{id}` | Get / delete session |
+| `GET` | `/sessions/{id}/ws` | WebSocket stream (real-time I/O) |
+| `POST` | `/sessions/{id}/message` | Send message to session |
+| `POST` | `/sessions/{id}/interrupt` | Interrupt running session |
+| `POST` | `/sessions/{id}/resume` | Resume paused session |
+| `GET` | `/projects` | List projects |
+| `GET` | `/projects/{name}` | Get project details |
+| `GET` | `/profiles` | List profiles |
+| `POST` | `/profiles/switch` | Switch active profile |
+| `GET` | `/stats/summary` | Cost summary |
+| `GET` | `/stats/projects` | Cost by project |
+| `GET` | `/stats/models` | Cost by model |
+| `POST` | `/stats/refresh` | Rebuild stats cache |
+| `GET` | `/workflows` | List workflows |
+| `GET/POST` | `/workflows/{name}` | Get / run workflow |
+| `GET/POST` | `/teams` | List / create teams |
+| `GET/DELETE` | `/teams/{name}` | Get / delete team |
+| `GET` | `/teams/{name}/status` | Team dashboard |
+| `GET/POST` | `/teams/{name}/tasks` | List / create tasks |
+| `GET` | `/tasks/{id}` | Get task by ID |
+
+### Configuration
+
+Add to `~/.codes/config.json` to pin the bind address or pre-set tokens:
+
+```json
+{
+  "httpBind": ":3456",
+  "httpTokens": ["your-secret-token"]
+}
+```
+
 ## Commands
 
 ```
@@ -157,6 +208,7 @@ codes init [--yes]                       # Install binary + shell completion
 codes start <path|alias>                 # Launch Claude in directory (alias: s)
 codes version / update                   # Version info / update Claude CLI
 codes doctor                             # System diagnostics
+codes serve [--addr :3456]              # Start HTTP REST API server
 ```
 
 ### Profile Management (`codes profile`, alias: `pf`)
@@ -287,9 +339,12 @@ codes/
 ├── cmd/codes/          # Entry point
 ├── internal/
 │   ├── agent/          # Agent teams: daemon, runner, storage
+│   ├── chatsession/    # Claude chat session lifecycle + WebSocket streaming
 │   ├── commands/       # Cobra CLI commands
 │   ├── config/         # Configuration management
-│   ├── mcp/            # MCP server (40 tools, stdio transport)
+│   ├── dispatch/       # Intent-based task dispatch to agent teams
+│   ├── httpserver/     # HTTP REST API server (sessions, projects, stats, workflows)
+│   ├── mcp/            # MCP server (43 tools, stdio transport)
 │   ├── session/        # Terminal session manager
 │   ├── stats/          # Cost tracking and aggregation
 │   ├── remote/         # SSH remote management
