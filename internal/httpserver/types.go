@@ -12,11 +12,20 @@ type DispatchRequest struct {
 	CallbackURL string `json:"callback_url,omitempty"` // URL to POST result when task completes or fails
 }
 
-// DispatchResponse represents the dispatch API response
+// DispatchResponse represents the simple dispatch API response
 type DispatchResponse struct {
 	TaskID int    `json:"task_id"` // Created task ID
 	Team   string `json:"team"`    // Created team name
 	Status string `json:"status"`  // Task status (typically "pending")
+}
+
+// SmartDispatchResponse represents the smart dispatch API response
+type SmartDispatchResponse struct {
+	Team          string `json:"team,omitempty"`
+	TasksCreated  int    `json:"tasks_created,omitempty"`
+	AgentsStarted int    `json:"agents_started,omitempty"`
+	Clarify       string `json:"clarify,omitempty"`
+	Duration      string `json:"duration,omitempty"`
 }
 
 // TaskResponse represents the task status response

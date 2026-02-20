@@ -1,9 +1,12 @@
 package httpserver
 
 import (
+	"bufio"
 	"crypto/subtle"
 	"encoding/json"
+	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"strings"
 	"time"
@@ -33,6 +36,7 @@ func (s *HTTPServer) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		for _, validToken := range s.tokens {
 			if subtle.ConstantTimeCompare([]byte(token), []byte(validToken)) == 1 {
 				valid = true
+				break
 			}
 		}
 
@@ -84,6 +88,15 @@ type loggingResponseWriter struct {
 func (lrw *loggingResponseWriter) WriteHeader(code int) {
 	lrw.statusCode = code
 	lrw.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack delegates to the underlying ResponseWriter so WebSocket upgrades work
+// through the logging middleware.
+func (lrw *loggingResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	if hj, ok := lrw.ResponseWriter.(http.Hijacker); ok {
+		return hj.Hijack()
+	}
+	return nil, nil, fmt.Errorf("response writer does not implement http.Hijacker")
 }
 
 // respondJSON sends a JSON response

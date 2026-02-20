@@ -2,11 +2,12 @@ package dispatch
 
 // DispatchOptions configures a dispatch request.
 type DispatchOptions struct {
-	UserInput string // Raw user input text
-	Channel   string // Source channel: "http", "telegram", "slack", etc.
-	ChatID    string // Channel-specific chat/user ID
-	Project   string // User-specified project (optional, dispatcher may override)
-	Model     string // Anthropic model for intent analysis (default: haiku)
+	UserInput   string // Raw user input text
+	Channel     string // Source channel: "http", "telegram", "slack", etc.
+	ChatID      string // Channel-specific chat/user ID
+	Project     string // User-specified project (optional, dispatcher may override)
+	Model       string // Anthropic model for intent analysis (default: haiku)
+	CallbackURL string // URL to POST result when task completes (written at task creation time)
 }
 
 // IntentResponse is the structured output from Claude intent analysis.

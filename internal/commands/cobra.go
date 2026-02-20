@@ -438,6 +438,7 @@ var ServeCmd = &cobra.Command{
 
 func init() {
 	ServeCmd.Flags().String("http", "", "HTTP bind address (e.g., ':8080'). If empty, runs stdio MCP server")
+	ServeCmd.Flags().Lookup("http").NoOptDefVal = ":3456"
 }
 
 // RemoteCmd represents the remote command

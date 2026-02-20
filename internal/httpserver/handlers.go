@@ -1,6 +1,7 @@
 package httpserver
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"time"
 
 	"codes/internal/agent"
+	"codes/internal/dispatch"
 )
 
 // handleHealth handles GET /health
@@ -24,8 +26,67 @@ func (s *HTTPServer) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// handleDispatch handles POST /dispatch
+// handleDispatch handles POST /dispatch using smart intent analysis.
 func (s *HTTPServer) handleDispatch(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodPost {
+		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	var req DispatchRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		respondError(w, http.StatusBadRequest, fmt.Sprintf("invalid JSON: %v", err))
+		return
+	}
+
+	if req.Text == "" {
+		respondError(w, http.StatusBadRequest, "field 'text' is required")
+		return
+	}
+
+	if req.Channel == "" {
+		req.Channel = "http"
+	}
+
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Minute)
+	defer cancel()
+
+	result, err := dispatch.Dispatch(ctx, dispatch.DispatchOptions{
+		UserInput:   req.Text,
+		Channel:     req.Channel,
+		ChatID:      req.ChatID,
+		Project:     req.Project,
+		CallbackURL: req.CallbackURL,
+	})
+	if err != nil {
+		respondError(w, http.StatusInternalServerError, fmt.Sprintf("dispatch failed: %v", err))
+		return
+	}
+
+	if result.Clarify != "" {
+		respondJSON(w, http.StatusOK, SmartDispatchResponse{
+			Clarify:  result.Clarify,
+			Duration: result.DurationStr,
+		})
+		return
+	}
+
+	if result.Error != "" {
+		respondError(w, http.StatusBadRequest, result.Error)
+		return
+	}
+
+	respondJSON(w, http.StatusCreated, SmartDispatchResponse{
+		Team:          result.TeamName,
+		TasksCreated:  result.TasksCreated,
+		AgentsStarted: result.AgentsStarted,
+		Duration:      result.DurationStr,
+	})
+}
+
+// handleDispatchSimple handles POST /dispatch/simple (legacy single-worker dispatch).
+func (s *HTTPServer) handleDispatchSimple(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodPost {
 		respondError(w, http.StatusMethodNotAllowed, "method not allowed")
 		return

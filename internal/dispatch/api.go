@@ -136,23 +136,15 @@ func parseIntentJSON(text string) (*IntentResponse, error) {
 		return &intent, nil
 	}
 
-	// Try to find JSON object in the text (Claude sometimes wraps in markdown)
-	start := -1
-	depth := 0
-	for i, ch := range text {
-		if ch == '{' {
-			if depth == 0 {
-				start = i
-			}
-			depth++
-		} else if ch == '}' {
-			depth--
-			if depth == 0 && start >= 0 {
-				candidate := text[start : i+1]
-				if err := json.Unmarshal([]byte(candidate), &intent); err == nil {
-					return &intent, nil
-				}
-			}
+	// Try to find the first valid JSON object using json.Decoder.
+	// This handles cases where Claude wraps JSON in markdown or prose containing braces.
+	for i := 0; i < len(text); i++ {
+		if text[i] != '{' {
+			continue
+		}
+		dec := json.NewDecoder(bytes.NewReader([]byte(text[i:])))
+		if err := dec.Decode(&intent); err == nil {
+			return &intent, nil
 		}
 	}
 

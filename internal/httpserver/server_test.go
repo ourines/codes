@@ -175,7 +175,7 @@ func TestMethodNotAllowed(t *testing.T) {
 	}{
 		{"/health", http.MethodPost},
 		{"/dispatch", http.MethodGet},
-		{"/teams", http.MethodPost},
+		{"/teams", http.MethodPut},
 	}
 
 	for _, tt := range tests {
