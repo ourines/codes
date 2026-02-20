@@ -391,11 +391,173 @@ func buildTools() ([]anthropic.BetaTool, error) {
 		return nil, fmt.Errorf("cancel_schedule tool: %w", err)
 	}
 
+	// ── Team control tools ───────────────────────────────────────────────────
+
+	// -- stop_agent --
+	type stopAgentInput struct {
+		Team  string `json:"team" jsonschema:"required,description=Team name"`
+		Agent string `json:"agent" jsonschema:"required,description=Agent name to stop"`
+	}
+	stopAgentTool, err := toolrunner.NewBetaToolFromJSONSchema(
+		"stop_agent",
+		"Send a stop signal to a running agent. The agent will finish its current step and exit gracefully.",
+		func(ctx context.Context, input stopAgentInput) (anthropic.BetaToolResultBlockParamContentUnion, error) {
+			_, err := agent.SendMessage(input.Team, "assistant", input.Agent, "__stop__")
+			if err != nil {
+				return toolText("error: " + err.Error()), nil
+			}
+			return toolText(fmt.Sprintf("Stop signal sent to agent %q in team %q.", input.Agent, input.Team)), nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("stop_agent tool: %w", err)
+	}
+
+	// -- stop_all_agents --
+	type stopAllAgentsInput struct {
+		Team string `json:"team" jsonschema:"required,description=Team name"`
+	}
+	stopAllAgentsTool, err := toolrunner.NewBetaToolFromJSONSchema(
+		"stop_all_agents",
+		"Send a stop signal to all running agents in a team.",
+		func(ctx context.Context, input stopAllAgentsInput) (anthropic.BetaToolResultBlockParamContentUnion, error) {
+			team, err := agent.GetTeam(input.Team)
+			if err != nil {
+				return toolText("error: " + err.Error()), nil
+			}
+			count := 0
+			for _, m := range team.Members {
+				if _, err := agent.SendMessage(input.Team, "assistant", m.Name, "__stop__"); err == nil {
+					count++
+				}
+			}
+			return toolText(fmt.Sprintf("Stop signal sent to %d agent(s) in team %q.", count, input.Team)), nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("stop_all_agents tool: %w", err)
+	}
+
+	// -- delete_team --
+	type deleteTeamInput struct {
+		Team string `json:"team" jsonschema:"required,description=Team name to delete"`
+	}
+	deleteTeamTool, err := toolrunner.NewBetaToolFromJSONSchema(
+		"delete_team",
+		"Delete a team and all its state (tasks, messages, agent files). Stop agents first.",
+		func(ctx context.Context, input deleteTeamInput) (anthropic.BetaToolResultBlockParamContentUnion, error) {
+			if err := agent.DeleteTeam(input.Team); err != nil {
+				return toolText("error: " + err.Error()), nil
+			}
+			return toolText(fmt.Sprintf("Team %q deleted.", input.Team)), nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("delete_team tool: %w", err)
+	}
+
+	// -- cancel_task --
+	type cancelTaskInput struct {
+		Team   string `json:"team" jsonschema:"required,description=Team name"`
+		TaskID int    `json:"task_id" jsonschema:"required,description=Task ID to cancel"`
+	}
+	cancelTaskTool, err := toolrunner.NewBetaToolFromJSONSchema(
+		"cancel_task",
+		"Cancel a pending or in-progress task. The agent will stop working on it at the next checkpoint.",
+		func(ctx context.Context, input cancelTaskInput) (anthropic.BetaToolResultBlockParamContentUnion, error) {
+			task, err := agent.CancelTask(input.Team, input.TaskID)
+			if err != nil {
+				return toolText("error: " + err.Error()), nil
+			}
+			return toolText(fmt.Sprintf("Task #%d %q cancelled.", task.ID, task.Subject)), nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("cancel_task tool: %w", err)
+	}
+
+	// -- redirect_task --
+	type redirectTaskInput struct {
+		Team            string `json:"team" jsonschema:"required,description=Team name"`
+		TaskID          int    `json:"task_id" jsonschema:"required,description=Task ID to redirect"`
+		NewInstructions string `json:"new_instructions" jsonschema:"required,description=Updated task description"`
+		NewSubject      string `json:"new_subject,omitempty" jsonschema:"description=New task title (optional, keeps original if empty)"`
+	}
+	redirectTaskTool, err := toolrunner.NewBetaToolFromJSONSchema(
+		"redirect_task",
+		"Cancel a task and create a new one with updated instructions, assigned to the same agent. Use when a task has gone in the wrong direction.",
+		func(ctx context.Context, input redirectTaskInput) (anthropic.BetaToolResultBlockParamContentUnion, error) {
+			newTask, err := agent.RedirectTask(input.Team, input.TaskID, input.NewInstructions, input.NewSubject)
+			if err != nil {
+				return toolText("error: " + err.Error()), nil
+			}
+			return toolText(fmt.Sprintf("Task #%d redirected → new task #%d %q.", input.TaskID, newTask.ID, newTask.Subject)), nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("redirect_task tool: %w", err)
+	}
+
+	// -- send_message --
+	type sendMessageInput struct {
+		Team    string `json:"team" jsonschema:"required,description=Team name"`
+		To      string `json:"to" jsonschema:"required,description=Recipient agent name (use broadcast to send to all)"`
+		Content string `json:"content" jsonschema:"required,description=Message content"`
+	}
+	sendMessageTool, err := toolrunner.NewBetaToolFromJSONSchema(
+		"send_message",
+		"Send a message to a specific agent (or broadcast to all). Agents read messages between task steps.",
+		func(ctx context.Context, input sendMessageInput) (anthropic.BetaToolResultBlockParamContentUnion, error) {
+			var err error
+			if input.To == "broadcast" || input.To == "" {
+				_, err = agent.BroadcastMessage(input.Team, "assistant", input.Content)
+			} else {
+				_, err = agent.SendMessage(input.Team, "assistant", input.To, input.Content)
+			}
+			if err != nil {
+				return toolText("error: " + err.Error()), nil
+			}
+			return toolText(fmt.Sprintf("Message sent to %q in team %q.", input.To, input.Team)), nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("send_message tool: %w", err)
+	}
+
+	// -- add_task --
+	type addTaskInput struct {
+		Team        string `json:"team" jsonschema:"required,description=Team name"`
+		Subject     string `json:"subject" jsonschema:"required,description=Task title"`
+		Description string `json:"description" jsonschema:"required,description=Detailed task description"`
+		Assign      string `json:"assign,omitempty" jsonschema:"description=Agent name to assign to (first available if empty)"`
+	}
+	addTaskTool, err := toolrunner.NewBetaToolFromJSONSchema(
+		"add_task",
+		"Add a new task to an existing team. Useful for injecting follow-up work after reviewing progress.",
+		func(ctx context.Context, input addTaskInput) (anthropic.BetaToolResultBlockParamContentUnion, error) {
+			task, err := agent.CreateTask(input.Team, input.Subject, input.Description, input.Assign, nil, agent.PriorityNormal, "", "")
+			if err != nil {
+				return toolText("error: " + err.Error()), nil
+			}
+			return toolText(fmt.Sprintf("Task #%d %q added to team %q (assigned: %q).", task.ID, task.Subject, input.Team, task.Owner)), nil
+		},
+	)
+	if err != nil {
+		return nil, fmt.Errorf("add_task tool: %w", err)
+	}
+
 	return []anthropic.BetaTool{
 		listProjectsTool,
 		runTasksTool,
 		getTeamStatusTool,
 		listTeamsTool,
+		stopAgentTool,
+		stopAllAgentsTool,
+		deleteTeamTool,
+		cancelTaskTool,
+		redirectTaskTool,
+		sendMessageTool,
+		addTaskTool,
 		rememberTool,
 		recallTool,
 		forgetTool,

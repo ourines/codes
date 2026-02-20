@@ -34,10 +34,6 @@ func (s *HTTPServer) registerRoutes() {
 	// Health check (no auth required)
 	s.mux.HandleFunc("/health", loggingMiddleware(s.handleHealth))
 
-	// === Dispatch ===
-	s.mux.HandleFunc("/dispatch", loggingMiddleware(s.authMiddleware(jsonContentTypeMiddleware(s.handleDispatch))))
-	s.mux.HandleFunc("/dispatch/simple", loggingMiddleware(s.authMiddleware(jsonContentTypeMiddleware(s.handleDispatchSimple))))
-
 	// === Projects & Profiles (Block B) ===
 	s.mux.HandleFunc("/projects", loggingMiddleware(s.authMiddleware(s.handleListProjects)))
 	s.mux.HandleFunc("/projects/", loggingMiddleware(s.authMiddleware(s.handleGetProject)))

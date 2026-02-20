@@ -2,65 +2,56 @@ package mcpserver
 
 import (
 	"context"
+	"fmt"
 
 	mcpsdk "github.com/modelcontextprotocol/go-sdk/mcp"
 
-	"codes/internal/dispatch"
+	"codes/internal/assistant"
 )
 
 // -- dispatch --
+// Routes natural language requests through the personal assistant,
+// which uses tools (run_tasks, list_projects, etc.) to act on the request.
 
 type dispatchInput struct {
-	Text        string `json:"text" jsonschema:"Natural language task description"`
-	Project     string `json:"project,omitempty" jsonschema:"Target project name (auto-detected if omitted)"`
-	Channel     string `json:"channel,omitempty" jsonschema:"Source channel identifier (default: mcp)"`
-	CallbackURL string `json:"callback_url,omitempty" jsonschema:"URL to POST when tasks complete"`
-	Model       string `json:"model,omitempty" jsonschema:"Model for intent analysis (default: haiku)"`
+	Text      string `json:"text" jsonschema:"Natural language task description or request"`
+	SessionID string `json:"session_id,omitempty" jsonschema:"Conversation session ID (default: dispatch)"`
 }
 
 type dispatchOutput struct {
-	Team          string `json:"team,omitempty"`
-	TasksCreated  int    `json:"tasks_created,omitempty"`
-	AgentsStarted int    `json:"agents_started,omitempty"`
-	Clarify       string `json:"clarify,omitempty"`
-	Duration      string `json:"duration,omitempty"`
-	Error         string `json:"error,omitempty"`
+	Reply string `json:"reply"`
 }
 
 func dispatchHandler(ctx context.Context, req *mcpsdk.CallToolRequest, input dispatchInput) (*mcpsdk.CallToolResult, dispatchOutput, error) {
-	if input.Channel == "" {
-		input.Channel = "mcp"
+	if input.Text == "" {
+		return nil, dispatchOutput{}, fmt.Errorf("field 'text' is required")
+	}
+	sessionID := input.SessionID
+	if sessionID == "" {
+		sessionID = "dispatch"
 	}
 
-	result, err := dispatch.Dispatch(ctx, dispatch.DispatchOptions{
-		UserInput:   input.Text,
-		Channel:     input.Channel,
-		Project:     input.Project,
-		CallbackURL: input.CallbackURL,
-		Model:       input.Model,
+	result, err := assistant.Run(ctx, assistant.RunOptions{
+		SessionID: sessionID,
+		Message:   input.Text,
 	})
 	if err != nil {
-		return nil, dispatchOutput{Error: err.Error()}, nil
+		return nil, dispatchOutput{}, fmt.Errorf("assistant error: %w", err)
 	}
 
-	return nil, dispatchOutput{
-		Team:          result.TeamName,
-		TasksCreated:  result.TasksCreated,
-		AgentsStarted: result.AgentsStarted,
-		Clarify:       result.Clarify,
-		Duration:      result.DurationStr,
-		Error:         result.Error,
-	}, nil
+	return nil, dispatchOutput{Reply: result.Reply}, nil
 }
 
 func registerDispatchTool(server *mcpsdk.Server) {
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
 		Name: "dispatch",
-		Description: `Dispatch a natural language task request to an autonomous agent team.
-Uses AI to analyze the request, identify the target project, break it into tasks,
-assign workers, and start execution — all in one step.
+		Description: `Send a natural language request to the personal assistant.
+The assistant understands intent, manages agent teams, runs tasks, and remembers context.
 
-Returns team name for monitoring with team_status/team_watch.
-If the request is ambiguous, returns a 'clarify' message instead of creating tasks.`,
+Examples:
+  "Give myproject a code review"         → creates team, runs agents
+  "What's the status of team foo?"       → calls get_team_status
+  "Stop all agents in team bar"          → sends stop signals
+  "Remind me to deploy at 5pm"           → sets a reminder`,
 	}, dispatchHandler)
 }

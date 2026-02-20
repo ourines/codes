@@ -431,10 +431,10 @@ var ServeCmd = &cobra.Command{
 	Short: "Start codes daemon (HTTP + scheduler + SSE MCP)",
 	Long: `Start the codes personal assistant daemon.
 
-Starts everything automatically — no flags needed:
-  • HTTP REST server on :3456
-  • Assistant scheduler
-  • SSE MCP server on :9999
+Starts everything automatically — no flags needed (all on :3456):
+  • HTTP REST server  → http://host:3456/
+  • MCP SSE transport → http://host:3456/mcp/
+  • Assistant scheduler (background)
   • stdio MCP when stdin is a pipe (Claude Code MCP mode)
 
 Example:

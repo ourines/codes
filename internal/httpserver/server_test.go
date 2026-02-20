@@ -1,7 +1,6 @@
 package httpserver
 
 import (
-	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -103,68 +102,6 @@ func TestJSONContentTypeMiddleware(t *testing.T) {
 	}
 }
 
-// TestDispatchEndpointValidation tests request validation for /dispatch
-func TestDispatchEndpointValidation(t *testing.T) {
-	server := NewHTTPServer([]string{"test-token"}, "test")
-
-	tests := []struct {
-		name           string
-		payload        interface{}
-		expectedStatus int
-		expectedError  string
-	}{
-		{
-			name:           "Missing text field",
-			payload:        map[string]string{"channel": "telegram"},
-			expectedStatus: http.StatusBadRequest,
-			expectedError:  "field 'text' is required",
-		},
-		{
-			name:           "Invalid JSON",
-			payload:        "not json",
-			expectedStatus: http.StatusBadRequest,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			var body []byte
-			var err error
-
-			if strPayload, ok := tt.payload.(string); ok {
-				body = []byte(strPayload)
-			} else {
-				body, err = json.Marshal(tt.payload)
-				if err != nil {
-					t.Fatalf("Failed to marshal payload: %v", err)
-				}
-			}
-
-			req := httptest.NewRequest(http.MethodPost, "/dispatch", bytes.NewReader(body))
-			req.Header.Set("Authorization", "Bearer test-token")
-			req.Header.Set("Content-Type", "application/json")
-
-			w := httptest.NewRecorder()
-			server.mux.ServeHTTP(w, req)
-
-			if w.Code != tt.expectedStatus {
-				t.Errorf("Expected status %d, got %d", tt.expectedStatus, w.Code)
-			}
-
-			if tt.expectedError != "" {
-				var errResp ErrorResponse
-				if err := json.NewDecoder(w.Body).Decode(&errResp); err != nil {
-					t.Fatalf("Failed to decode error response: %v", err)
-				}
-
-				if errResp.Error != tt.expectedError {
-					t.Errorf("Expected error '%s', got '%s'", tt.expectedError, errResp.Error)
-				}
-			}
-		})
-	}
-}
-
 // TestMethodNotAllowed tests that endpoints reject wrong HTTP methods
 func TestMethodNotAllowed(t *testing.T) {
 	server := NewHTTPServer([]string{"test-token"}, "test")
@@ -174,8 +111,8 @@ func TestMethodNotAllowed(t *testing.T) {
 		method string
 	}{
 		{"/health", http.MethodPost},
-		{"/dispatch", http.MethodGet},
 		{"/teams", http.MethodPut},
+		{"/assistant", http.MethodGet},
 	}
 
 	for _, tt := range tests {

@@ -2,32 +2,6 @@ package httpserver
 
 import "time"
 
-// DispatchRequest represents the incoming dispatch API request
-type DispatchRequest struct {
-	Text        string `json:"text"`                  // User's request text
-	Channel     string `json:"channel,omitempty"`     // Source channel (e.g., "telegram", "slack")
-	ChatID      string `json:"chat_id,omitempty"`     // Channel-specific chat/user ID
-	Project     string `json:"project,omitempty"`     // Target project name
-	Priority    string `json:"priority,omitempty"`    // Task priority: "high", "normal", "low"
-	CallbackURL string `json:"callback_url,omitempty"` // URL to POST result when task completes or fails
-}
-
-// DispatchResponse represents the simple dispatch API response
-type DispatchResponse struct {
-	TaskID int    `json:"task_id"` // Created task ID
-	Team   string `json:"team"`    // Created team name
-	Status string `json:"status"`  // Task status (typically "pending")
-}
-
-// SmartDispatchResponse represents the smart dispatch API response
-type SmartDispatchResponse struct {
-	Team          string `json:"team,omitempty"`
-	TasksCreated  int    `json:"tasks_created,omitempty"`
-	AgentsStarted int    `json:"agents_started,omitempty"`
-	Clarify       string `json:"clarify,omitempty"`
-	Duration      string `json:"duration,omitempty"`
-}
-
 // TaskResponse represents the task status response
 type TaskResponse struct {
 	ID          int       `json:"id"`

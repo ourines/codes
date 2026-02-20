@@ -22,9 +22,9 @@ import (
 
 // RunServe is the single entry point for `codes serve`.
 //
-// Always starts:
+// Always starts (single port :3456):
 //   - HTTP REST server + assistant scheduler
-//   - SSE MCP server on :9999
+//   - SSE MCP handler mounted at /mcp/
 //   - stdio MCP when stdin is a pipe (e.g. spawned by Claude Code)
 func RunServe() {
 	// Detect whether we were spawned with a pipe on stdin (Claude Code MCP mode).
