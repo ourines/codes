@@ -2,6 +2,7 @@ package httpserver
 
 import (
 	"context"
+	"crypto/rand"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -114,9 +115,11 @@ func (s *HTTPServer) handleDispatchSimple(w http.ResponseWriter, r *http.Request
 		req.Priority = "normal"
 	}
 
-	// Generate team name: dispatch-{channel}-{timestamp}
-	timestamp := time.Now().Unix()
-	teamName := fmt.Sprintf("dispatch-%s-%d", req.Channel, timestamp)
+	// Generate team name with nanosecond timestamp + random suffix to avoid collisions
+	randBuf := make([]byte, 2)
+	_, _ = rand.Read(randBuf)
+	randSuffix := int(randBuf[0])<<8 | int(randBuf[1])
+	teamName := fmt.Sprintf("dispatch-%s-%d-%04d", req.Channel, time.Now().UnixNano(), randSuffix%10000)
 
 	// Create team
 	teamDesc := fmt.Sprintf("Dispatch from %s", req.Channel)

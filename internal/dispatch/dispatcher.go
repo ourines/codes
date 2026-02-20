@@ -186,8 +186,8 @@ func execute(intent *IntentResponse, project config.ProjectEntry, opts DispatchO
 			}
 			return nil, fmt.Errorf("create task %d: %w", i+1, err)
 		}
-		// Store callback URL on the first task (before agents start)
-		if i == 0 && opts.CallbackURL != "" {
+		// Store callback URL on every task so any completion triggers the callback
+		if opts.CallbackURL != "" {
 			agent.UpdateTask(teamName, task.ID, func(t *agent.Task) error {
 				t.CallbackURL = opts.CallbackURL
 				return nil
