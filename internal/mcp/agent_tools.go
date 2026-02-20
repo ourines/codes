@@ -955,13 +955,45 @@ func registerAgentTools(server *mcpsdk.Server) {
 	}, testProgressHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
-		Name:        "team_watch",
-		Description: "Get a bash command that monitors agent task completion notifications in real time. RECOMMENDED: after starting agents or creating tasks, call this tool and run the returned command using the Task tool (run_in_background=true, subagent_type=Bash). This provides real-time push notifications when agents complete or fail tasks, complementing the passive pending_notifications piggyback in other tool responses.",
+		Name: "team_watch",
+		Description: `Get a bash command that monitors agent task completion notifications in real time.
+
+RECOMMENDED USAGE — run BOTH steps after starting agents:
+
+Step 1 (bash log): Call team_watch, then run the returned command in a background Bash Task:
+  Task(subagent_type="Bash", run_in_background=True, prompt="Run: <command>")
+  → Writes notifications to an output file. You must actively read that file to see results.
+  → Does NOT automatically wake the main session.
+
+Step 2 (auto-wakeup): ALSO spawn a background general-purpose Task that calls team_subscribe:
+  Task(subagent_type="general-purpose", run_in_background=True,
+       prompt="Call team_subscribe for team '<name>' and report when any task notification arrives.")
+  → Blocks until a notification arrives, then exits and triggers a <task-notification> that
+    automatically wakes the main session — no polling needed.
+
+Use both together: bash watch for the running log, team_subscribe for automatic wakeup.`,
 	}, teamWatchHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
-		Name:        "team_subscribe",
-		Description: "Subscribe to agent task notifications for a team. This tool BLOCKS until a notification arrives or timeout is reached. Designed for use with background Task agents: the agent calls team_subscribe and blocks waiting; when a notification arrives, the tool returns and the agent completes, triggering a <task-notification> that wakes the main session. Prefer this over team_watch for programmatic notification delivery. IMPORTANT: NEVER call this tool directly from the main session — it will block the main session and prevent it from doing any work. Always run it inside a background Task (run_in_background=true, subagent_type=Bash or general-purpose).",
+		Name: "team_subscribe",
+		Description: `Subscribe to agent task notifications for a team. This tool BLOCKS until a notification arrives or timeout is reached.
+
+HOW IT WORKS:
+- Call this from a background general-purpose Task (NOT from the main session, NOT from a Bash Task).
+- The agent blocks waiting; when a task completes/fails, the tool returns.
+- The background agent then exits, automatically triggering a <task-notification> that wakes the main session.
+- No polling required — this is event-driven and instant.
+
+CORRECT USAGE (after starting agents):
+  Task(subagent_type="general-purpose", run_in_background=True,
+       prompt="Call team_subscribe for team '<name>' with timeout=30 and report notifications.")
+
+WRONG USAGE:
+  ❌ Calling team_subscribe directly in the main session — blocks everything
+  ❌ Running inside a Bash Task — Bash cannot call MCP tools
+
+IMPORTANT: Also run team_watch in a background Bash Task to capture the full notification log.
+Prefer this over team_watch alone for automatic main-session wakeup.`,
 	}, teamSubscribeHandler)
 
 	mcpsdk.AddTool(server, &mcpsdk.Tool{
